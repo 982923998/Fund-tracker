@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.env
+data/*
+!data/.gitkeep
+config/fund_tracker.yaml
+web-ui/node_modules/
+web-ui/dist/

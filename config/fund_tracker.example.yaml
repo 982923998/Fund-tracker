@@ -1,0 +1,26 @@
+storage:
+  db_path: data/fund_tracker.db
+  snapshot_dir: data/fund_tracker_snapshots
+
+pricing:
+  provider: eastmoney_pingzhongdata
+
+monitor:
+  default_drop_threshold_pct: 1.5
+
+schedule:
+  daily_run_time: "21:30"
+
+notifications:
+  macos_enabled: true
+  title_prefix: Fund Tracker
+
+email:
+  enabled: false
+  smtp_host: smtp.example.com
+  smtp_port: 465
+  use_ssl: true
+  username: your_email@example.com
+  password_env: FUND_TRACKER_SMTP_PASSWORD
+  sender: your_email@example.com
+  recipient: your_email@example.com

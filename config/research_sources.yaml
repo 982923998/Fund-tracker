@@ -1,0 +1,122 @@
+sources:
+  - name: 国家统计局
+    category: 宏观政策
+    homepage: https://www.stats.gov.cn/
+    fetch_strategy: html_links
+    note: 优先关注经济数据、新闻发布与统计公报
+
+  - name: 中国人民银行
+    category: 宏观政策
+    homepage: https://www.pbc.gov.cn/
+    fetch_strategy: html_links
+    note: 优先关注货币政策、流动性与金融统计
+
+  - name: 国家发展和改革委员会
+    category: 宏观政策
+    homepage: https://www.ndrc.gov.cn/
+    fetch_strategy: html_links
+    note: 优先关注产业政策、投资政策与价格调控
+
+  - name: 美联储
+    category: 海外宏观
+    homepage: https://www.federalreserve.gov/
+    fetch_strategy: rss
+    feed_url: https://www.federalreserve.gov/feeds/press_all.xml
+    note: 优先关注议息、政策声明与官员讲话
+
+  - name: 美国劳工统计局
+    category: 海外宏观
+    homepage: https://www.bls.gov/
+    fetch_strategy: rss
+    feed_url: https://www.bls.gov/feed/bls_latest.rss
+    note: 优先关注 CPI、非农就业与薪资数据
+
+  - name: 上海证券交易所
+    category: 交易所与披露
+    homepage: https://www.sse.com.cn/
+    fetch_strategy: html_links
+
+  - name: 深圳证券交易所
+    category: 交易所与披露
+    homepage: https://www.szse.cn/index/index.html
+    fetch_strategy: html_links
+
+  - name: 北京证券交易所
+    category: 交易所与披露
+    homepage: https://www.bse.cn/
+    fetch_strategy: html_links
+
+  - name: 巨潮资讯网
+    category: 交易所与披露
+    homepage: https://www.cninfo.com.cn/
+    fetch_strategy: html_links
+    note: 重点关注公告与监管问询
+
+  - name: 中证指数有限公司
+    category: 指数与风格
+    homepage: https://www.csindex.com.cn/
+    fetch_strategy: html_links
+    note: 重点关注样本调整、权重变化与指数公告
+
+  - name: 国证指数官网
+    category: 指数与风格
+    homepage: https://www.cnindex.com.cn/
+    fetch_strategy: html_links
+
+  - name: 标普道琼斯指数公司
+    category: 指数与风格
+    homepage: https://www.spglobal.com/spdji/en/
+    fetch_strategy: html_links
+
+  - name: 世界黄金协会
+    category: 商品与大类资产
+    homepage: https://www.gold.org/
+    fetch_strategy: html_links
+
+  - name: 芝加哥商品交易所
+    category: 商品与大类资产
+    homepage: https://www.cmegroup.com/
+    fetch_strategy: html_links
+
+  - name: 伦敦金银市场协会
+    category: 商品与大类资产
+    homepage: https://www.lbma.org.uk/
+    fetch_strategy: html_links
+
+  - name: 上海有色网
+    category: 商品与大类资产
+    homepage: https://www.smm.cn/
+    fetch_strategy: html_links
+
+  - name: 伦敦金属交易所
+    category: 商品与大类资产
+    homepage: https://www.lme.com/
+    fetch_strategy: html_links
+
+  - name: 上海期货交易所
+    category: 商品与大类资产
+    homepage: https://www.shfe.com.cn/
+    fetch_strategy: html_links
+    note: 用户提到的“上海激活交易所”按上海期货交易所处理
+
+  - name: 中国机器人产业联盟
+    category: 行业协会
+    homepage: https://www.cria.org.cn/
+    fetch_strategy: html_links
+
+  - name: 中国有色金属工业协会
+    category: 行业协会
+    homepage: https://www.chinania.org.cn/
+    fetch_strategy: html_links
+
+  - name: 财联社
+    category: 媒体快讯
+    homepage: https://www.cls.cn/
+    fetch_strategy: html_links
+    note: 仅作为事件线索来源，不单独作为配置依据
+
+  - name: 金十数据
+    category: 媒体快讯
+    homepage: https://www.jin10.com/
+    fetch_strategy: html_links
+    note: 仅作为事件线索来源，不单独作为配置依据

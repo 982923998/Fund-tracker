@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "report_body": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "report_body"
+  ],
+  "additionalProperties": false
+}

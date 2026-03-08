@@ -1,0 +1,81 @@
+{
+  "type": "object",
+  "properties": {
+    "report_body": {
+      "type": "string"
+    },
+    "execution_plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action_type": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell",
+              "create_dca",
+              "update_dca",
+              "pause_dca",
+              "resume_dca",
+              "cancel_dca"
+            ]
+          },
+          "sign": {
+            "type": "string",
+            "enum": [
+              "+",
+              "-"
+            ]
+          },
+          "action_label": {
+            "type": "string"
+          },
+          "fund_code": {
+            "type": "string"
+          },
+          "fund_name": {
+            "type": "string"
+          },
+          "amount": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "frequency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "run_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "action_type",
+          "sign",
+          "action_label",
+          "fund_code",
+          "fund_name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "report_body",
+    "execution_plan"
+  ],
+  "additionalProperties": false
+}

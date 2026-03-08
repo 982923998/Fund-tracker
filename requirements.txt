@@ -1,0 +1,5 @@
+PyYAML>=6.0
+fastapi
+uvicorn
+pydantic
+akshare
