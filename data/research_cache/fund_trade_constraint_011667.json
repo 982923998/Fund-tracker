@@ -1,0 +1,12 @@
+{
+  "fund_code": "011667",
+  "fund_name": "东财高端制造增强A",
+  "purchase_status": "开放申购",
+  "daily_purchase_limit_amount": null,
+  "is_purchase_open": true,
+  "constraint_source": "eastmoney",
+  "source_url": "https://fundf10.eastmoney.com/jjfl_011667.html",
+  "fetch_succeeded": true,
+  "auto_maintained": true,
+  "fetched_at": "2026-03-08T13:53:34"
+}

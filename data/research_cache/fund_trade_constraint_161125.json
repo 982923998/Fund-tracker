@@ -1,0 +1,12 @@
+{
+  "fund_code": "161125",
+  "fund_name": "易方达标普500指数人民币A",
+  "purchase_status": "限大额",
+  "daily_purchase_limit_amount": 10.0,
+  "is_purchase_open": true,
+  "constraint_source": "eastmoney",
+  "source_url": "https://fundf10.eastmoney.com/jjfl_161125.html",
+  "fetch_succeeded": true,
+  "auto_maintained": true,
+  "fetched_at": "2026-03-08T13:52:01"
+}

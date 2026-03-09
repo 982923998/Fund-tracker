@@ -1,0 +1,12 @@
+{
+  "fund_code": "022485",
+  "fund_name": "国金中证A500指数增强A",
+  "purchase_status": "开放申购",
+  "daily_purchase_limit_amount": null,
+  "is_purchase_open": true,
+  "constraint_source": "eastmoney",
+  "source_url": "https://fundf10.eastmoney.com/jjfl_022485.html",
+  "fetch_succeeded": true,
+  "auto_maintained": true,
+  "fetched_at": "2026-03-08T13:53:32"
+}

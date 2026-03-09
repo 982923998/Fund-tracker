@@ -1,0 +1,12 @@
+{
+  "fund_code": "164701",
+  "fund_name": "汇添富黄金及贵金属(QDII-LOF-FOF)A",
+  "purchase_status": "限大额",
+  "daily_purchase_limit_amount": 50.0,
+  "is_purchase_open": true,
+  "constraint_source": "eastmoney",
+  "source_url": "https://fundf10.eastmoney.com/jjfl_164701.html",
+  "fetch_succeeded": true,
+  "auto_maintained": true,
+  "fetched_at": "2026-03-08T13:53:32"
+}

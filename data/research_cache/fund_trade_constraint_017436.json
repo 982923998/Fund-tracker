@@ -1,0 +1,12 @@
+{
+  "fund_code": "017436",
+  "fund_name": "华宝纳斯达克精选股票发起式(QDII)A",
+  "purchase_status": "限大额",
+  "daily_purchase_limit_amount": 3000.0,
+  "is_purchase_open": true,
+  "constraint_source": "eastmoney",
+  "source_url": "https://fundf10.eastmoney.com/jjfl_017436.html",
+  "fetch_succeeded": true,
+  "auto_maintained": true,
+  "fetched_at": "2026-03-08T13:53:30"
+}

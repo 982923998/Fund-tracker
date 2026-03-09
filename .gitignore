@@ -6,6 +6,7 @@ __pycache__/
 !data/.gitkeep
 data/*.log
 data/logs/
+data/codex_briefings/*.log
 config/fund_tracker.yaml
 web-ui/node_modules/
 web-ui/dist/
