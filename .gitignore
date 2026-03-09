@@ -3,8 +3,9 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
-data/*
 !data/.gitkeep
+data/*.log
+data/logs/
 config/fund_tracker.yaml
 web-ui/node_modules/
 web-ui/dist/

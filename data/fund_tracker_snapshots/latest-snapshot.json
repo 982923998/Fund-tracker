@@ -1,0 +1,110 @@
+{
+  "generated_at": "2026-03-07T17:39:21",
+  "portfolio": {
+    "position_count": 4,
+    "total_market_value": 120.0,
+    "total_cost_basis": 120.0,
+    "total_unrealized_pnl": 0.0,
+    "total_realized_pnl": 0.0,
+    "total_return": 0.0,
+    "total_net_invested": 120.0
+  },
+  "positions": [
+    {
+      "fund_code": "000834",
+      "fund_name": "大成纳斯达克100ETF联接(QDII)A",
+      "shares": 9.0527,
+      "average_cost_nav": 5.5232,
+      "cost_basis": 50.0,
+      "market_value": 50.0,
+      "latest_nav": 5.5232,
+      "latest_price_date": "2026-03-04",
+      "daily_pct_change": -0.43,
+      "unrealized_pnl": -0.0,
+      "realized_pnl": 0.0,
+      "net_invested": 50.0,
+      "return_pct": -0.0,
+      "weight_pct": 41.67
+    },
+    {
+      "fund_code": "017641",
+      "fund_name": "摩根标普500指数(QDII)人民币A",
+      "shares": 32.4317,
+      "average_cost_nav": 1.5417,
+      "cost_basis": 50.0,
+      "market_value": 50.0,
+      "latest_nav": 1.5417,
+      "latest_price_date": "2026-03-04",
+      "daily_pct_change": -0.64,
+      "unrealized_pnl": -0.0,
+      "realized_pnl": 0.0,
+      "net_invested": 50.0,
+      "return_pct": -0.0,
+      "weight_pct": 41.67
+    },
+    {
+      "fund_code": "161125",
+      "fund_name": "易方达标普500指数人民币A",
+      "shares": 3.4898,
+      "average_cost_nav": 2.8655,
+      "cost_basis": 10.0,
+      "market_value": 10.0,
+      "latest_nav": 2.8661,
+      "latest_price_date": "2026-03-04",
+      "daily_pct_change": -0.67,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "net_invested": 10.0,
+      "return_pct": 0.02,
+      "weight_pct": 8.33
+    },
+    {
+      "fund_code": "006479",
+      "fund_name": "广发纳斯达克100ETF联接人民币(QDII)C",
+      "shares": 1.4301,
+      "average_cost_nav": 6.9925,
+      "cost_basis": 10.0,
+      "market_value": 10.0,
+      "latest_nav": 6.9923,
+      "latest_price_date": "2026-03-04",
+      "daily_pct_change": -0.45,
+      "unrealized_pnl": -0.0,
+      "realized_pnl": 0.0,
+      "net_invested": 10.0,
+      "return_pct": -0.0,
+      "weight_pct": 8.33
+    }
+  ],
+  "active_dca_plans": [
+    {
+      "id": 2,
+      "fund_code": "000834",
+      "amount": 50.0,
+      "frequency": "weekly",
+      "run_rule": "weekly:MON",
+      "enabled": 1,
+      "start_date": "2026-03-07",
+      "end_date": null,
+      "note": null,
+      "created_at": "2026-03-07T17:13:45",
+      "updated_at": "2026-03-07T17:13:45",
+      "fund_name": "大成纳斯达克100ETF联接(QDII)A",
+      "default_drop_threshold_pct": 1.5
+    },
+    {
+      "id": 1,
+      "fund_code": "161125",
+      "amount": 10.0,
+      "frequency": "daily",
+      "run_rule": "daily",
+      "enabled": 1,
+      "start_date": "2026-03-07",
+      "end_date": null,
+      "note": null,
+      "created_at": "2026-03-07T17:13:45",
+      "updated_at": "2026-03-07T17:13:45",
+      "fund_name": "易方达标普500指数人民币A",
+      "default_drop_threshold_pct": 1.5
+    }
+  ]
+}
