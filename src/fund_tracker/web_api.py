@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+import os
+from datetime import date, datetime
 from functools import lru_cache
 from typing import Iterator, Optional
 
@@ -40,6 +41,7 @@ def get_service() -> Iterator[FundTrackerService]:
 class TradeRequest(BaseModel):
     text: str
     trade_date: Optional[str] = None
+    order_at: Optional[str] = None
 
 
 class ReportExecutionActionRequest(BaseModel):
@@ -57,6 +59,14 @@ class ReportExecutionActionRequest(BaseModel):
 class ApplyReportExecutionRequest(BaseModel):
     actions: list[ReportExecutionActionRequest]
     trade_date: Optional[str] = None
+
+
+class IndustryWatchlistRequest(BaseModel):
+    themes: list[str]
+
+
+class BackfillPurchaseFeesRequest(BaseModel):
+    overwrite: bool = False
 
 
 @app.get("/api/summary")
@@ -105,6 +115,23 @@ def get_analysis_reports(limit: int = 20, service: FundTrackerService = Depends(
     return service.list_analysis_reports(limit=limit)
 
 
+@app.get("/api/industry-watchlist")
+def get_priority_industry_watchlist(service: FundTrackerService = Depends(get_service)):
+    return service.get_priority_industry_watchlist()
+
+
+@app.put("/api/industry-watchlist")
+def update_priority_industry_watchlist(
+    req: IndustryWatchlistRequest,
+    service: FundTrackerService = Depends(get_service),
+):
+    try:
+        payload = service.update_priority_industry_watchlist(req.themes)
+        return {"message": "重点行业标签已更新，下次生成报告时生效。", "payload": payload}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/analysis-reports/generate")
 def generate_analysis_report(
     mode: str = "monthly",
@@ -116,8 +143,10 @@ def generate_analysis_report(
             result = service.apply_text_command("分析当前持仓")
         elif mode == "monthly":
             result = service.generate_external_analysis_report(mode=mode, available_cash=available_cash)
+        elif mode == "daily_opportunity":
+            result = service.generate_daily_opportunity_report(available_cash=available_cash, notify=False)
         else:
-            raise HTTPException(status_code=400, detail="当前仅支持增强月报。")
+            raise HTTPException(status_code=400, detail="当前仅支持本地分析、增强月报和今日强机会监测。")
         return {"message": result.message, "payload": result.payload}
     except HTTPException:
         raise
@@ -147,7 +176,8 @@ def apply_analysis_report_execution(
 def apply_command(req: TradeRequest, service: FundTrackerService = Depends(get_service)):
     try:
         trade_date = date.fromisoformat(req.trade_date) if req.trade_date else None
-        result = service.apply_text_command(req.text, trade_date=trade_date)
+        order_at = datetime.fromisoformat(req.order_at) if req.order_at else None
+        result = service.apply_text_command(req.text, trade_date=trade_date, order_at=order_at)
         return {"message": result.message, "payload": result.payload}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -235,7 +265,36 @@ def get_runtime_config(service: FundTrackerService = Depends(get_service)):
     }
 
 
+@app.post("/api/tasks/backfill-purchase-fees")
+def backfill_purchase_fees(
+    req: BackfillPurchaseFeesRequest,
+    service: FundTrackerService = Depends(get_service),
+):
+    try:
+        result = service.backfill_purchase_fees(overwrite=bool(req.overwrite))
+        return {"message": result.message, "payload": result.payload}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/diagnostics/price-freshness")
+def get_price_freshness(date_str: Optional[str] = None, service: FundTrackerService = Depends(get_service)):
+    try:
+        as_of = date.fromisoformat(date_str) if date_str else None
+        return service.get_price_freshness_diagnostics(as_of=as_of)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"日期格式错误：{exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/health")
+def get_health():
+    return {"status": "ok", "service": "fund-tracker"}
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    port = int(os.getenv("FUND_TRACKER_API_PORT", "8000"))
+    uvicorn.run(app, host="127.0.0.1", port=port)

@@ -8,7 +8,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -31,61 +31,130 @@ KEYWORD_GROUPS: list[tuple[str, tuple[str, ...]]] = [
     ("domestic_index", ("沪深", "中证", "上证", "深证", "A500", "科创50", "科创", "央企红利", "红利低波", "中证红利")),
     ("money", ("货币",)),
     ("fof", ("FOF",)),
-    ("active_equity", ("股票", "混合", "成长", "价值", "科技", "机器人", "有色")),
+    (
+        "active_equity",
+        (
+            "股票", "混合", "成长", "价值", "科技", "机器人", "有色", "人工智能", "AI", "算力",
+            "半导体", "芯片", "石油", "油气", "能源", "消费", "航天", "卫星", "储能", "电力", "养老",
+        ),
+    ),
 ]
 
 
-CANDIDATE_UNIVERSE_SPECS = [
+MARKET_SCAN_CATEGORY = "全部"
+
+CORE_CANDIDATE_UNIVERSE_SPECS = [
     {
         "theme": "美股宽基",
         "bucket": "海外核心权益",
         "keywords": ("标普500", "纳斯达克100", "纳斯达克", "标普"),
-        "category": "QDII",
-        "role": "观察美国大盘与科技主导资产是否仍值得保留或新增暴露。",
+        "role": "从全市场基金中观察美国大盘与科技主导资产是否仍值得保留或新增暴露。",
+        "focus_level": "core",
     },
     {
         "theme": "债券防御",
         "bucket": "防御资产",
-        "keywords": ("中短债", "纯债", "金融债", "国债"),
-        "category": "债券型",
-        "role": "观察低波动资产是否需要承担组合缓冲与现金管理角色。",
-    },
-    {
-        "theme": "黄金贵金属",
-        "bucket": "对冲资产",
-        "keywords": ("黄金ETF联接", "黄金"),
-        "category": "QDII",
-        "role": "观察避险、通胀与美元实际利率变化下的对冲价值。",
+        "keywords": ("中短债", "纯债", "金融债", "国债", "利率债", "信用债"),
+        "role": "从全市场基金中观察低波动资产是否需要承担组合缓冲与现金管理角色。",
+        "focus_level": "core",
     },
     {
         "theme": "A股宽基",
         "bucket": "国内核心权益",
-        "keywords": ("沪深300", "中证A500", "A500", "上证50"),
-        "category": "指数型",
-        "role": "观察国内核心权益是否具备承接新增资金的基础配置价值。",
+        "keywords": ("沪深300", "中证A500", "A500", "上证50", "中证800"),
+        "role": "从全市场基金中观察国内核心权益是否具备承接新增资金的基础配置价值。",
+        "focus_level": "core",
     },
     {
         "theme": "红利低波",
         "bucket": "风格因子",
-        "keywords": ("红利低波", "中证红利", "红利"),
-        "category": "指数型",
-        "role": "观察现金流、分红与低波风格是否更适合当前市场环境。",
-    },
-    {
-        "theme": "机器人与高端制造",
-        "bucket": "产业升级",
-        "keywords": ("机器人", "高端制造", "工业母机", "智能制造"),
-        "category": "指数型",
-        "role": "观察高景气制造、自动化与产业升级主题是否值得作为卫星仓位。",
-    },
-    {
-        "theme": "资源与周期",
-        "bucket": "周期资产",
-        "keywords": ("有色", "油气", "资源", "煤炭"),
-        "category": "指数型",
-        "role": "观察资源、能源与周期资产在当前通胀和供给格局中的弹性。",
+        "keywords": ("红利低波", "中证红利", "红利", "央企红利", "高股息"),
+        "role": "从全市场基金中观察现金流、分红与低波风格是否更适合当前市场环境。",
+        "focus_level": "core",
     },
 ]
+
+PRIORITY_INDUSTRY_THEME_SPECS = [
+    {
+        "theme": "石油能源",
+        "bucket": "重点行业",
+        "keywords": ("石油", "油气", "原油", "能源"),
+        "role": "重点观察石油与油气产业链在通胀、地缘和供给扰动下的配置价值。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "有色金属",
+        "bucket": "重点行业",
+        "keywords": ("有色", "有色金属", "铜", "铝", "稀土"),
+        "role": "重点观察有色金属与资源品在资本开支、供给约束和顺周期修复中的弹性。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "算力基础设施",
+        "bucket": "重点行业",
+        "keywords": ("算力", "云计算", "数据中心", "通信", "CPO", "服务器"),
+        "role": "重点观察算力基础设施在 AI 资本开支扩张中的承接能力。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "人工智能",
+        "bucket": "重点行业",
+        "keywords": ("人工智能", "AI", "智能驾驶", "大模型"),
+        "role": "重点观察 AI 主线是否具备独立于泛科技主题的中期配置理由。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "商业航天",
+        "bucket": "重点行业",
+        "keywords": ("商业航天", "航天", "卫星", "航空航天"),
+        "role": "重点观察商业航天与卫星互联网是否进入更可持续的产业验证阶段。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "电力协同",
+        "bucket": "重点行业",
+        "keywords": ("电力", "电网", "储能", "虚拟电厂", "智能电网", "电力设备"),
+        "role": "重点观察发电、储能、电网与电力设备协同链条的配置机会。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "黄金贵金属",
+        "bucket": "重点行业",
+        "keywords": ("黄金ETF联接", "黄金", "贵金属", "上海金"),
+        "role": "重点观察黄金与贵金属在避险、通胀和美元实际利率变化下的对冲价值。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "养老",
+        "bucket": "重点行业",
+        "keywords": ("养老", "养老目标", "养老2035", "养老2040", "养老2050", "养老FOF"),
+        "role": "重点观察养老目标与养老 FOF 是否适合作为长期稳健资金的承接方向。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "机器人",
+        "bucket": "重点行业",
+        "keywords": ("机器人", "自动化", "工业母机", "智能制造"),
+        "role": "重点观察机器人与自动化是否仍处于高景气但可承受的配置区间。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "半导体",
+        "bucket": "重点行业",
+        "keywords": ("半导体", "芯片", "集成电路", "科创芯片"),
+        "role": "重点观察半导体链条在国产替代与全球资本开支周期中的配置价值。",
+        "focus_level": "priority",
+    },
+    {
+        "theme": "消费",
+        "bucket": "重点行业",
+        "keywords": ("消费", "消费50", "消费电子", "食品饮料", "白酒", "家电", "新消费"),
+        "role": "重点观察消费板块在内需修复和盈利改善中的中期机会。",
+        "focus_level": "priority",
+    },
+]
+
+CANDIDATE_UNIVERSE_SPECS = CORE_CANDIDATE_UNIVERSE_SPECS + PRIORITY_INDUSTRY_THEME_SPECS
 
 
 INDEX_CODES = {
@@ -163,7 +232,43 @@ class ExternalResearchEngine:
         self.config_path = config_path
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.priority_watchlist_path = self.cache_dir.parent / "priority_industry_watchlist.json"
         self.sources = self._load_sources()
+
+    def describe_priority_industry_watchlist(self) -> dict[str, Any]:
+        defaults = [item["theme"] for item in PRIORITY_INDUSTRY_THEME_SPECS]
+        stored = self._load_priority_industry_watchlist_store()
+        configured = self._normalize_priority_industry_watchlist(stored.get("active_themes"))
+        if not configured:
+            stored = {
+                "active_themes": defaults,
+                "updated_at": stored.get("updated_at"),
+            }
+            with open(self.priority_watchlist_path, "w", encoding="utf-8") as handle:
+                json.dump(stored, handle, ensure_ascii=False, indent=2)
+            configured = list(defaults)
+        active_themes = configured or defaults
+        default_theme_set = set(defaults)
+        return {
+            "active_themes": active_themes,
+            "default_themes": defaults,
+            "custom_themes": [theme for theme in active_themes if theme not in default_theme_set],
+            "updated_at": stored.get("updated_at"),
+            "watchlist_path": str(self.priority_watchlist_path),
+        }
+
+    def update_priority_industry_watchlist(self, themes: list[str]) -> dict[str, Any]:
+        normalized = self._normalize_priority_industry_watchlist(themes)
+        if not normalized:
+            normalized = [item["theme"] for item in PRIORITY_INDUSTRY_THEME_SPECS]
+
+        payload = {
+            "active_themes": normalized,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        with open(self.priority_watchlist_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        return self.describe_priority_industry_watchlist()
 
     def lookup_fund_trade_constraint(
         self,
@@ -217,6 +322,72 @@ class ExternalResearchEngine:
         self._save_json_cache(cache_key, result)
         return result
 
+    def lookup_fund_purchase_fee_rate(
+        self,
+        fund_code: str,
+        fund_name: str = "",
+        ttl_hours: int = 12,
+    ) -> float | None:
+        normalized_code = str(fund_code).strip()
+        if not normalized_code:
+            return None
+
+        categories = [MARKET_SCAN_CATEGORY, "指数型", "债券型", "QDII"]
+        for category in categories:
+            rows = self._load_fund_ranking_rows(category, ttl_hours=ttl_hours)
+            for row in rows:
+                if str(row.get("基金代码", "")).strip() != normalized_code:
+                    continue
+                return self._parse_fee_rate_pct(row.get("手续费"))
+        return None
+
+    def lookup_fund_settlement_rule(
+        self,
+        fund_code: str,
+        fund_name: str = "",
+        ttl_hours: int = 24,
+    ) -> dict[str, Any]:
+        normalized_code = str(fund_code).strip()
+        cache_key = f"fund_settlement_rule_{normalized_code}"
+        cached = self._load_json_cache(cache_key, ttl_hours=ttl_hours)
+        if isinstance(cached, dict):
+            return cached
+
+        rule: dict[str, Any] = {
+            "fund_code": normalized_code,
+            "fund_name": fund_name,
+            "cutoff_time": "15:00",
+            "confirm_trade_day_lag": 0,
+            "effective_trade_day_lag_after_confirm": 1,
+            "rule_source": "inference",
+            "fetch_succeeded": False,
+            "fetched_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        text = f"{fund_name} {normalized_code}".upper()
+        if "QDII" in text or any(token in text for token in ("纳斯达克", "标普", "恒生", "海外", "美股")):
+            rule["effective_trade_day_lag_after_confirm"] = 2
+
+        source_url = f"https://fundf10.eastmoney.com/jjfl_{normalized_code}.html"
+        try:
+            html = self._fetch_url_text(source_url)
+            compact = re.sub(r"\s+", "", html)
+            cutoff = self._extract_cutoff_time(compact)
+            if cutoff is not None:
+                rule["cutoff_time"] = cutoff.strftime("%H:%M")
+            confirm_lag = self._extract_confirm_trade_day_lag(compact)
+            if confirm_lag is not None:
+                rule["confirm_trade_day_lag"] = confirm_lag
+            effective_lag = self._extract_effective_trade_day_lag(compact)
+            if effective_lag is not None:
+                rule["effective_trade_day_lag_after_confirm"] = effective_lag
+            rule["rule_source"] = "eastmoney+inference"
+            rule["fetch_succeeded"] = True
+        except Exception:
+            pass
+
+        self._save_json_cache(cache_key, rule)
+        return rule
+
     def build_report(
         self,
         snapshot: dict[str, Any],
@@ -262,7 +433,8 @@ class ExternalResearchEngine:
         source_updates = self._collect_source_updates(days=30, per_source=4)
         market_context = self._collect_market_context()
         portfolio_diagnostics = self._build_portfolio_diagnostics(snapshot, holdings_summary)
-        candidate_universe = self._build_candidate_universe(snapshot["positions"])
+        candidate_context = self._build_candidate_universe_context(snapshot["positions"])
+        candidate_universe = candidate_context["candidate_universe"]
         fund_constraints_catalog = self._build_fund_constraints_catalog(
             snapshot,
             candidate_universe,
@@ -300,6 +472,8 @@ class ExternalResearchEngine:
             "fund_constraints_catalog": fund_constraints_catalog,
             "market_context": self._briefing_market_context(market_context),
             "candidate_universe": candidate_universe,
+            "candidate_universe_scope": candidate_context["candidate_universe_scope"],
+            "priority_industry_watchlist": candidate_context["priority_industry_watchlist"],
             "analysis_window_days": 30,
             "news_events": news_events[:48],
             "source_whitelist": [
@@ -341,7 +515,8 @@ class ExternalResearchEngine:
         holdings_summary = self._summarize_holdings(snapshot["positions"])
         portfolio_diagnostics = self._build_portfolio_diagnostics(snapshot, holdings_summary)
         market_context = self._collect_market_context()
-        candidate_universe = self._build_candidate_universe(snapshot["positions"])
+        candidate_context = self._build_candidate_universe_context(snapshot["positions"])
+        candidate_universe = candidate_context["candidate_universe"]
         fund_constraints_catalog = self._build_fund_constraints_catalog(
             snapshot,
             candidate_universe,
@@ -386,8 +561,95 @@ class ExternalResearchEngine:
             "portfolio_diagnostics": portfolio_diagnostics,
             "market_context": self._briefing_market_context(market_context),
             "candidate_universe": candidate_universe,
+            "candidate_universe_scope": candidate_context["candidate_universe_scope"],
+            "priority_industry_watchlist": candidate_context["priority_industry_watchlist"],
             "latest_monthly_report": monthly_context,
         }
+
+    def build_daily_opportunity_material_packet(
+        self,
+        snapshot: dict[str, Any],
+        latest_monthly_report: dict[str, Any] | None = None,
+        available_cash: float | None = None,
+        risk_profile: str = "稳健",
+        as_of: date | None = None,
+    ) -> dict[str, Any]:
+        report_date = as_of or date.today()
+        holdings_summary = self._summarize_holdings(snapshot["positions"])
+        portfolio_diagnostics = self._build_portfolio_diagnostics(snapshot, holdings_summary)
+        source_updates = self._collect_source_updates(days=5, per_source=3)
+        market_context = self._collect_market_context()
+        candidate_context = self._build_candidate_universe_context(snapshot["positions"])
+        candidate_universe = candidate_context["candidate_universe"]
+        fund_constraints_catalog = self._build_fund_constraints_catalog(
+            snapshot,
+            candidate_universe,
+        )
+        news_events = self._flatten_source_events(source_updates)
+        news_events.sort(
+            key=lambda item: (
+                item.get("published_at", ""),
+                item.get("category", ""),
+                item.get("source_name", ""),
+            ),
+            reverse=True,
+        )
+
+        monthly_context = None
+        if latest_monthly_report:
+            monthly_context = {
+                "id": latest_monthly_report.get("id"),
+                "created_at": latest_monthly_report.get("created_at"),
+                "report_type": latest_monthly_report.get("report_type"),
+                "skill_name": latest_monthly_report.get("skill_name"),
+                "report_body": latest_monthly_report.get("report_body"),
+            }
+
+        packet = {
+            "report_date": report_date.isoformat(),
+            "risk_profile": risk_profile,
+            "investor_profile": {
+                "style": "长期定投，非短线投机",
+                "briefing_preference": "月报为主，日常只在强信号时行动",
+                "goal": "每天监测市场动态，只在出现足够强的例外买点时提醒并给出当日可执行建议",
+                "new_cash_style_preference": "新增资金优先承担补核心仓、防御仓或对冲仓的角色",
+            },
+            "daily_monitor_policy": {
+                "default_action": "no_action",
+                "exception_only": True,
+                "max_funds_per_day": 2,
+                "allow_same_day_execution_only": True,
+                "requires_clear_why_now": True,
+                "prefer_alignment_with_latest_monthly_view": True,
+            },
+            "allocation_constraints": {
+                "currency": "CNY",
+                "amount_granularity": 10,
+                "same_day_executable_only": True,
+                "consider_due_dca_today": True,
+                "cash_retention_allowed": True,
+            },
+            "same_day_execution_context": snapshot.get("same_day_execution_context", {}),
+            "fund_constraints_catalog": fund_constraints_catalog,
+            "portfolio_snapshot": snapshot,
+            "holdings_summary": holdings_summary,
+            "portfolio_diagnostics": portfolio_diagnostics,
+            "market_context": self._briefing_market_context(market_context),
+            "candidate_universe": candidate_universe,
+            "candidate_universe_scope": candidate_context["candidate_universe_scope"],
+            "priority_industry_watchlist": candidate_context["priority_industry_watchlist"],
+            "priority_industry_watch_snapshot": self._build_priority_industry_watch_snapshot(
+                candidate_universe,
+                market_context,
+                news_events[:24],
+            ),
+            "analysis_window_days": 5,
+            "news_events": news_events[:24],
+            "latest_monthly_report": monthly_context,
+        }
+        if available_cash is not None and available_cash > 0:
+            packet["available_cash"] = round(float(available_cash), 2)
+        return packet
 
     def _build_fund_constraints_catalog(
         self,
@@ -468,13 +730,14 @@ class ExternalResearchEngine:
     def _cache_path(self, name: str) -> Path:
         return self.cache_dir / f"{name}.json"
 
-    def _load_json_cache(self, name: str, ttl_hours: int) -> Any | None:
+    def _load_json_cache(self, name: str, ttl_hours: int | None) -> Any | None:
         path = self._cache_path(name)
         if not path.exists():
             return None
-        age = datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)
-        if age > timedelta(hours=ttl_hours):
-            return None
+        if ttl_hours is not None:
+            age = datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)
+            if age > timedelta(hours=ttl_hours):
+                return None
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 return json.load(handle)
@@ -485,6 +748,75 @@ class ExternalResearchEngine:
         path = self._cache_path(name)
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+
+    def _load_priority_industry_watchlist_store(self) -> dict[str, Any]:
+        if not self.priority_watchlist_path.exists():
+            return {}
+        try:
+            with open(self.priority_watchlist_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _normalize_priority_industry_watchlist(self, themes: Any) -> list[str]:
+        if not isinstance(themes, list):
+            return []
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in themes:
+            theme = re.sub(r"\s+", " ", str(item or "")).strip()
+            if not theme or theme in seen:
+                continue
+            seen.add(theme)
+            normalized.append(theme)
+        return normalized
+
+    def _priority_industry_theme_specs(self) -> list[dict[str, Any]]:
+        active_themes = self.describe_priority_industry_watchlist()["active_themes"]
+        builtin_specs = {
+            str(item.get("theme", "")).strip(): item
+            for item in PRIORITY_INDUSTRY_THEME_SPECS
+            if item.get("theme")
+        }
+
+        specs: list[dict[str, Any]] = []
+        for theme in active_themes:
+            builtin = builtin_specs.get(theme)
+            if builtin:
+                specs.append(dict(builtin))
+                continue
+            specs.append(self._build_custom_priority_industry_spec(theme))
+        return specs
+
+    def _build_custom_priority_industry_spec(self, theme: str) -> dict[str, Any]:
+        keywords = self._derive_custom_priority_theme_keywords(theme)
+        return {
+            "theme": theme,
+            "bucket": "重点行业",
+            "keywords": keywords,
+            "role": f"重点观察{theme}相关产业链在当前市场环境中的配置价值。",
+            "focus_level": "priority",
+            "is_custom": True,
+        }
+
+    def _derive_custom_priority_theme_keywords(self, theme: str) -> tuple[str, ...]:
+        normalized = re.sub(r"\s+", " ", str(theme or "")).strip()
+        if not normalized:
+            return tuple()
+
+        candidates = [normalized]
+        simplified = re.sub(r"(主题|产业|行业|概念|板块)$", "", normalized).strip()
+        if simplified and simplified not in candidates:
+            candidates.append(simplified)
+
+        for fragment in re.split(r"[、，,/／；;\s]+", normalized):
+            token = fragment.strip()
+            if len(token) < 2 or token in candidates:
+                continue
+            candidates.append(token)
+        return tuple(candidates)
 
     def _collect_market_context(self) -> dict[str, Any]:
         if ak is None:
@@ -969,27 +1301,174 @@ class ExternalResearchEngine:
         self,
         positions: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        current_codes = {item["fund_code"] for item in positions}
+        return self._build_candidate_universe_context(positions)["candidate_universe"]
+
+    def _build_candidate_universe_context(
+        self,
+        positions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        current_codes = {str(item.get("fund_code", "")).strip() for item in positions if item.get("fund_code")}
+        all_market_rows = self._load_fund_ranking_rows(MARKET_SCAN_CATEGORY)
+        excluded_codes = set(current_codes)
+        priority_specs = self._priority_industry_theme_specs()
 
         pool: list[dict[str, Any]] = []
-        for rule in CANDIDATE_UNIVERSE_SPECS:
+        for rule in CORE_CANDIDATE_UNIVERSE_SPECS + priority_specs:
             items = self._search_funds(
                 keywords=rule["keywords"],
-                category=rule["category"],
-                exclude_codes=current_codes,
-                limit=2,
+                category=MARKET_SCAN_CATEGORY,
+                exclude_codes=excluded_codes,
+                limit=3 if rule.get("focus_level") == "priority" else 2,
+                ranking_rows=all_market_rows,
             )
             if items:
+                excluded_codes.update(str(item["fund_code"]) for item in items if item.get("fund_code"))
                 pool.append(
                     {
                         "theme": rule["theme"],
                         "bucket": rule["bucket"],
                         "role": rule["role"],
                         "reason": rule["role"],
+                        "focus_level": rule.get("focus_level", "priority"),
+                        "selection_scope": "全市场开放式基金扫描",
                         "funds": items,
                     }
                 )
-        return pool
+        return {
+            "candidate_universe": pool,
+            "candidate_universe_scope": {
+                "source_category": MARKET_SCAN_CATEGORY,
+                "selection_method": "先扫描全市场开放式基金，再按核心补位主题和重点行业压缩为候选摘要。",
+                "total_funds_scanned": len(all_market_rows),
+                "excluded_current_holding_count": len(current_codes),
+            },
+            "priority_industry_watchlist": [item["theme"] for item in priority_specs],
+        }
+
+    def _build_priority_industry_watch_snapshot(
+        self,
+        candidate_universe: list[dict[str, Any]],
+        market_context: dict[str, Any],
+        news_events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        candidates_by_theme = {
+            str(item.get("theme", "")).strip(): item
+            for item in candidate_universe
+            if isinstance(item, dict) and item.get("theme")
+        }
+        sectors = [item for item in market_context.get("sectors", []) if isinstance(item, dict)]
+        theme_funds = [item for item in market_context.get("theme_funds", []) if isinstance(item, dict)]
+        normalized_news = [item for item in news_events if isinstance(item, dict)]
+
+        results: list[dict[str, Any]] = []
+        for spec in self._priority_industry_theme_specs():
+            keywords = tuple(str(item) for item in spec.get("keywords", ()))
+            matched_candidate = candidates_by_theme.get(spec["theme"], {})
+            matched_funds = [
+                item for item in matched_candidate.get("funds", [])
+                if isinstance(item, dict)
+            ][:3]
+            top_sector_hits = [
+                item for item in sectors
+                if item.get("direction") == "top" and self._contains_any_keyword(str(item.get("name", "")), keywords)
+            ][:2]
+            bottom_sector_hits = [
+                item for item in sectors
+                if item.get("direction") == "bottom" and self._contains_any_keyword(str(item.get("name", "")), keywords)
+            ][:2]
+            leading_fund_hits = [
+                item for item in theme_funds
+                if self._contains_any_keyword(str(item.get("fund_name", "")), keywords)
+            ][:2]
+            news_hits = [
+                item for item in normalized_news
+                if self._contains_any_keyword(str(item.get("title", "")), keywords)
+            ][:2]
+
+            signal = "neutral"
+            if top_sector_hits and not bottom_sector_hits:
+                signal = "positive"
+            elif bottom_sector_hits and not top_sector_hits:
+                signal = "negative"
+            elif top_sector_hits and bottom_sector_hits:
+                signal = "mixed"
+            elif leading_fund_hits or news_hits:
+                signal = "positive"
+
+            summary_parts: list[str] = []
+            if top_sector_hits:
+                summary_parts.append(
+                    "板块偏强：" + "、".join(
+                        f"{item['name']}({float(item.get('pct_change', 0.0)):+.2f}%)"
+                        for item in top_sector_hits
+                    )
+                )
+            if bottom_sector_hits:
+                summary_parts.append(
+                    "板块承压：" + "、".join(
+                        f"{item['name']}({float(item.get('pct_change', 0.0)):+.2f}%)"
+                        for item in bottom_sector_hits
+                    )
+                )
+            if leading_fund_hits:
+                summary_parts.append(
+                    "强势基金线索："
+                    + "、".join(
+                        f"{item.get('fund_name')}({float(item.get('one_month', 0.0)):+.2f}%)"
+                        for item in leading_fund_hits
+                        if item.get("fund_name")
+                    )
+                )
+            if news_hits:
+                summary_parts.append(
+                    "近5天事件："
+                    + "；".join(self._short_report_title(str(item.get("title", ""))) for item in news_hits)
+                )
+            if not summary_parts:
+                summary_parts.append("今天公开线索不多，先维持观察。")
+
+            results.append(
+                {
+                    "theme": spec["theme"],
+                    "role": spec["role"],
+                    "signal": signal,
+                    "today_summary": " ".join(summary_parts),
+                    "representative_funds": [
+                        {
+                            "fund_code": str(fund.get("fund_code", "")).strip(),
+                            "fund_name": str(fund.get("fund_name", "")).strip(),
+                            "daily_growth_pct": self._safe_float(fund.get("daily_growth_pct")),
+                            "one_week": self._safe_float(fund.get("one_week")),
+                            "one_month": self._safe_float(fund.get("one_month")),
+                            "purchase_status": str(fund.get("purchase_status", "未知")).strip() or "未知",
+                            "daily_purchase_limit_amount": fund.get("daily_purchase_limit_amount"),
+                            "today_due_dca_amount": self._safe_float(fund.get("today_due_dca_amount")),
+                            "today_remaining_purchase_capacity": fund.get("today_remaining_purchase_capacity"),
+                        }
+                        for fund in matched_funds
+                    ],
+                }
+            )
+        return results
+
+    def _load_fund_ranking_rows(
+        self,
+        category: str,
+        ttl_hours: int = 12,
+    ) -> list[dict[str, Any]]:
+        cache_key = f"fund_rank_{category}"
+        ranking_rows = self._load_json_cache(cache_key, ttl_hours=ttl_hours)
+        if ranking_rows is None and ak is not None:
+            df = ak.fund_open_fund_rank_em(symbol=category)
+            ranking_rows = df.to_dict("records")
+            self._save_json_cache(cache_key, ranking_rows)
+        if ranking_rows is None and ak is None:
+            ranking_rows = self._load_json_cache(cache_key, ttl_hours=None)
+        if ranking_rows is None:
+            return []
+        if not isinstance(ranking_rows, list):
+            return []
+        return [row for row in ranking_rows if isinstance(row, dict)]
 
     def _search_funds(
         self,
@@ -997,16 +1476,9 @@ class ExternalResearchEngine:
         category: str,
         exclude_codes: set[str],
         limit: int,
+        ranking_rows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        if ak is None:
-            return []
-
-        cache_key = f"fund_rank_{category}"
-        ranking_rows = self._load_json_cache(cache_key, ttl_hours=12)
-        if ranking_rows is None:
-            df = ak.fund_open_fund_rank_em(symbol=category)
-            ranking_rows = df.to_dict("records")
-            self._save_json_cache(cache_key, ranking_rows)
+        ranking_rows = ranking_rows or self._load_fund_ranking_rows(category)
 
         results: list[dict[str, Any]] = []
         seen_codes: set[str] = set()
@@ -1026,11 +1498,15 @@ class ExternalResearchEngine:
                 continue
             seen_codes.add(code)
             trade_constraint = self.lookup_fund_trade_constraint(code, name)
+            inferred_category = self._classify_position(name)
             results.append(
                 {
                     "fund_code": code,
                     "fund_name": name,
-                    "category": category,
+                    "category": self._display_category_name(inferred_category),
+                    "market_category": inferred_category,
+                    "price_date": str(row.get("日期", "")) if row.get("日期") is not None else "",
+                    "daily_growth_pct": self._safe_float(row.get("日增长率")),
                     "one_week": self._safe_float(row.get("近1周")),
                     "one_month": self._safe_float(row.get("近1月")),
                     "one_year": self._safe_float(row.get("近1年")),
@@ -1054,6 +1530,73 @@ class ExternalResearchEngine:
             return float(value)
         except Exception:
             return None
+
+    def _parse_fee_rate_pct(self, value: Any) -> float | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        matched = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%", text)
+        if matched:
+            try:
+                return round(float(matched.group(1)), 4)
+            except ValueError:
+                return None
+        return self._safe_float(text)
+
+    def _extract_cutoff_time(self, compact_text: str) -> time | None:
+        patterns = [
+            r"(?:交易日)?([01]?\d:[0-5]\d)前(?:申购|买入|提交)",
+            r"(?:申购|买入)截止(?:时间)?([01]?\d:[0-5]\d)",
+        ]
+        for pattern in patterns:
+            matched = re.search(pattern, compact_text)
+            if not matched:
+                continue
+            try:
+                hour_text, minute_text = matched.group(1).split(":")
+                return time(hour=int(hour_text), minute=int(minute_text))
+            except Exception:
+                continue
+        return None
+
+    def _extract_confirm_trade_day_lag(self, compact_text: str) -> int | None:
+        patterns = [
+            r"T\+([0-3])(?:个?交易日|个?工作日|日)?(?:确认|确认份额)",
+            r"(?:确认份额|份额确认).*?T\+([0-3])",
+        ]
+        for pattern in patterns:
+            matched = re.search(pattern, compact_text)
+            if not matched:
+                continue
+            try:
+                return int(matched.group(1))
+            except ValueError:
+                continue
+        return None
+
+    def _extract_effective_trade_day_lag(self, compact_text: str) -> int | None:
+        patterns = [
+            r"确认后T\+([1-4])(?:个?交易日|个?工作日|日)?.{0,10}(?:开始计算收益|开始享有收益|收益起算)",
+            r"T\+([1-4])(?:个?交易日|个?工作日|日)?.{0,10}(?:开始计算收益|开始享有收益|收益起算)",
+            r"确认后下(?:一|1)个交易日",
+        ]
+        for pattern in patterns:
+            matched = re.search(pattern, compact_text)
+            if not matched:
+                continue
+            if matched.lastindex is None:
+                return 1
+            try:
+                return int(matched.group(1))
+            except ValueError:
+                continue
+        return None
+
+    def _contains_any_keyword(self, text: str, keywords: tuple[str, ...]) -> bool:
+        lowered = text.lower()
+        return any(keyword.lower() in lowered for keyword in keywords if keyword)
 
     def _render_daily_report(
         self,
@@ -1227,10 +1770,10 @@ class ExternalResearchEngine:
     ) -> list[str]:
         lines = self._market_lines(market_context, detailed=detailed)
         if candidates:
-            lines.append("- 结合当前组合结构，优先关注以下补仓候选：")
+            lines.append("- 基于全市场基金扫描与当前组合结构，优先关注以下补仓候选：")
             lines.extend(self._candidate_lines(candidates, detailed=detailed))
         else:
-            lines.append("- 当前未筛出新的候选基金，可先继续跟踪现有仓位和市场节奏。")
+            lines.append("- 当前未从全市场扫描中筛出更优候选，可先继续跟踪现有仓位和市场节奏。")
         return lines
 
     def _source_summary_lines(
@@ -1537,7 +2080,10 @@ class ExternalResearchEngine:
         candidate_themes = [item["theme"] for item in candidates[:4]]
         if candidate_themes:
             theme_text = "、".join(candidate_themes)
-            fragments.append(f"结合你现在的候选池，后续更值得跟踪的是 {theme_text} 这些方向，而不是继续增加同质化的美股指数暴露。")
+            fragments.append(
+                f"结合全市场基金扫描后的重点候选摘要，后续更值得跟踪的是 {theme_text} 这些方向，"
+                "而不是继续增加同质化的美股指数暴露。"
+            )
 
         if weekly and overseas_events:
             fragments.append("如果下周出现你设定的跌幅提醒，也更建议优先把补仓资金投向这些“补短板”的方向，而不是条件反射式抄底原有 QDII。")
@@ -1742,7 +2288,7 @@ class ExternalResearchEngine:
                 )
                 lines.append(line)
                 if detailed:
-                    lines.append("    - 说明：仅作为候选池，建议结合公告、指数样本和基金规模再次确认。")
+                    lines.append("    - 说明：这是全市场基金扫描后压缩出的重点候选摘要，建议结合公告、指数样本和基金规模再次确认。")
         return lines
 
     def _trend_alignment_lines(self, holdings_summary: dict[str, Any]) -> list[str]:

@@ -1,0 +1,149 @@
+{
+  "type": "object",
+  "properties": {
+    "report_body": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recommendation_level": {
+      "type": "string",
+      "enum": [
+        "watch",
+        "consider",
+        "strong_buy"
+      ]
+    },
+    "should_alert": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "no_action_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "opportunities": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "properties": {
+          "fund_code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$"
+          },
+          "fund_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action_type": {
+            "type": "string",
+            "const": "buy"
+          },
+          "suggested_amount": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 10,
+            "multipleOf": 10
+          },
+          "thesis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "why_now": {
+            "type": "string",
+            "minLength": 1
+          },
+          "portfolio_fit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "constraint_check": {
+            "type": "object",
+            "properties": {
+              "purchase_status": {
+                "type": "string",
+                "minLength": 1
+              },
+              "daily_purchase_limit_amount": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "today_due_dca_amount": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "today_remaining_purchase_capacity": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "same_day_executable": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "purchase_status",
+              "daily_purchase_limit_amount",
+              "today_due_dca_amount",
+              "today_remaining_purchase_capacity",
+              "same_day_executable"
+            ],
+            "additionalProperties": false
+          },
+          "risks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "fund_code",
+          "fund_name",
+          "action_type",
+          "suggested_amount",
+          "thesis",
+          "why_now",
+          "portfolio_fit",
+          "constraint_check",
+          "risks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "expires_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "report_body",
+    "recommendation_level",
+    "should_alert",
+    "summary",
+    "no_action_reason",
+    "opportunities",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

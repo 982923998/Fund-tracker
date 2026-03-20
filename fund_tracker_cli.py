@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -34,6 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser = subparsers.add_parser("apply", help="执行自然语言指令")
     apply_parser.add_argument("--text", required=True, help="自然语言指令文本")
     apply_parser.add_argument("--date", help="交易日期 YYYY-MM-DD，默认今天")
+    apply_parser.add_argument(
+        "--at",
+        help="下单时间 ISO8601（例如 2026-03-10T14:30:00），用于按截止时间计算确认/生效日期",
+    )
 
     daily_parser = subparsers.add_parser("daily-run", help="执行每日任务")
     daily_parser.add_argument("--date", help="运行日期 YYYY-MM-DD，默认今天")
@@ -43,6 +47,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze_parser = subparsers.add_parser("analyze", help="生成当前持仓分析")
     analyze_parser.add_argument("--json", action="store_true", help="输出 JSON")
+
+    daily_opportunity_parser = subparsers.add_parser(
+        "daily-opportunity",
+        help="生成今日强机会监测结果",
+    )
+    daily_opportunity_parser.add_argument("--cash", type=float, help="当前可支配资金，可选")
+    daily_opportunity_parser.add_argument("--date", help="分析日期 YYYY-MM-DD，默认今天")
+    daily_opportunity_parser.add_argument("--json", action="store_true", help="输出 JSON")
+
+    fee_backfill_parser = subparsers.add_parser(
+        "backfill-purchase-fees",
+        help="回填历史买入/定投手续费",
+    )
+    fee_backfill_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="覆盖已有 fee（默认仅回填 fee=0 的记录）",
+    )
+    fee_backfill_parser.add_argument("--json", action="store_true", help="输出 JSON")
+
+    freshness_parser = subparsers.add_parser(
+        "price-freshness",
+        help="诊断各基金最新净值日期与滞后天数",
+    )
+    freshness_parser.add_argument("--date", help="诊断日期 YYYY-MM-DD，默认今天")
+    freshness_parser.add_argument("--json", action="store_true", help="输出 JSON")
 
     subparsers.add_parser("test-notification", help="发送测试通知")
 
@@ -70,7 +100,8 @@ def main() -> int:
 
         if args.command == "apply":
             command_date = date.fromisoformat(args.date) if args.date else None
-            result = service.apply_text_command(args.text, trade_date=command_date)
+            order_at = datetime.fromisoformat(args.at) if getattr(args, "at", None) else None
+            result = service.apply_text_command(args.text, trade_date=command_date, order_at=order_at)
             _print_result(result.message, result.payload)
             return 0
 
@@ -95,6 +126,36 @@ def main() -> int:
                 print(json.dumps(result.payload, ensure_ascii=False, indent=2))
             else:
                 print(result.payload["report"])
+            return 0
+
+        if args.command == "daily-opportunity":
+            report_date = date.fromisoformat(args.date) if args.date else None
+            result = service.generate_daily_opportunity_report(
+                report_date=report_date,
+                available_cash=args.cash,
+                notify=False,
+            )
+            if args.json:
+                print(json.dumps(result.payload, ensure_ascii=False, indent=2))
+            else:
+                print(result.payload["report"])
+            return 0
+
+        if args.command == "backfill-purchase-fees":
+            result = service.backfill_purchase_fees(overwrite=bool(args.overwrite))
+            if args.json:
+                print(json.dumps(result.payload, ensure_ascii=False, indent=2))
+            else:
+                _print_result(result.message, result.payload)
+            return 0
+
+        if args.command == "price-freshness":
+            as_of = date.fromisoformat(args.date) if args.date else None
+            payload = service.get_price_freshness_diagnostics(as_of=as_of)
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
 
         if args.command == "test-notification":

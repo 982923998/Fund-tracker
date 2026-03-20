@@ -107,6 +107,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         for statement in SCHEMA_STATEMENTS:
             conn.execute(statement)
         _ensure_column(conn, "funds", "daily_purchase_limit_amount", "REAL")
+        _ensure_column(conn, "funds", "purchase_fee_rate_pct", "REAL")
+        _ensure_column(conn, "transactions", "order_date", "TEXT")
+        _ensure_column(conn, "transactions", "order_at", "TEXT")
+        _ensure_column(conn, "transactions", "confirm_nav_date", "TEXT")
+        _ensure_column(conn, "transactions", "effective_from_date", "TEXT")
 
 
 def _ensure_column(

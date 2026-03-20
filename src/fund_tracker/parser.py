@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from dataclasses import dataclass
 
 
@@ -18,6 +19,25 @@ def parse_command(text: str) -> ParsedCommand:
     normalized = re.sub(r"\s+", " ", text.strip())
     if not normalized:
         raise CommandParseError("指令为空")
+    normalized, explicit_trade_date = _extract_explicit_trade_date(normalized)
+
+    code_first_trade_match = re.match(
+        r"^(买入|卖出)\s+(\S+)\s+([0-9]+(?:\.[0-9]+)?)\s*(份)?$",
+        normalized,
+    )
+    if code_first_trade_match:
+        trade_type, identifier, amount_text, share_marker = code_first_trade_match.groups()
+        if _looks_like_fund_identifier(identifier):
+            return ParsedCommand(
+                action="trade",
+                payload={
+                    "trade_type": "buy" if trade_type == "买入" else "sell",
+                    "value": float(amount_text),
+                    "value_type": "shares" if share_marker else "amount",
+                    "identifier": identifier.strip(),
+                    "explicit_trade_date": explicit_trade_date,
+                },
+            )
 
     trade_match = re.match(
         r"^(买入|卖出)\s+([0-9]+(?:\.[0-9]+)?)\s*(份)?\s+(.+)$",
@@ -32,6 +52,7 @@ def parse_command(text: str) -> ParsedCommand:
                 "value": float(amount_text),
                 "value_type": "shares" if share_marker else "amount",
                 "identifier": identifier.strip(),
+                "explicit_trade_date": explicit_trade_date,
             },
         )
 
@@ -91,3 +112,41 @@ def _parse_frequency(text: str) -> tuple[str, str]:
     weekday = weekday_mapping[text[-1]]
     return "weekly", f"weekly:{weekday}"
 
+
+def _looks_like_fund_identifier(token: str) -> bool:
+    compact = token.strip()
+    if not compact:
+        return False
+    if re.fullmatch(r"\d{6}", compact):
+        return True
+    return bool(re.search(r"[A-Za-z\u4e00-\u9fff]", compact))
+
+
+def _extract_explicit_trade_date(text: str) -> tuple[str, str | None]:
+    leading = re.match(r"^(?P<date>\d{4}[-/]\d{1,2}[-/]\d{1,2})\s+(?P<rest>.+)$", text)
+    if leading:
+        parsed = _normalize_date_token(leading.group("date"))
+        if parsed is not None:
+            return leading.group("rest").strip(), parsed
+
+    trailing = re.match(r"^(?P<rest>.+?)\s+(?P<date>\d{4}[-/]\d{1,2}[-/]\d{1,2})$", text)
+    if trailing:
+        parsed = _normalize_date_token(trailing.group("date"))
+        if parsed is not None:
+            return trailing.group("rest").strip(), parsed
+
+    return text, None
+
+
+def _normalize_date_token(token: str) -> str | None:
+    normalized = token.replace("/", "-")
+    parts = normalized.split("-")
+    if len(parts) != 3:
+        return None
+    try:
+        year = int(parts[0])
+        month = int(parts[1])
+        day = int(parts[2])
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None

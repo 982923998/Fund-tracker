@@ -10,6 +10,7 @@
 4. 每日抓取基金净值
 5. 按相对前一日跌幅发送补仓提醒
 6. 生成组合快照与本地分析报告
+7. 每日监测是否出现值得打断月报节奏的强机会提醒
 
 ## 目录结构
 
@@ -86,6 +87,7 @@ python3 fund_tracker_cli.py apply --text "新增定投 50 每天 001632"
 python3 fund_tracker_cli.py apply --text "暂停定投 110011"
 python3 fund_tracker_cli.py summary
 python3 fund_tracker_cli.py analyze
+python3 fund_tracker_cli.py daily-opportunity --cash 2000
 python3 fund_tracker_cli.py test-notification
 ```
 

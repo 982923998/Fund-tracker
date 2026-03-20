@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import smtplib
 import sqlite3
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,9 @@ class FundTrackerService:
                     note=note or "初始持仓导入",
                     raw_text="initial import",
                     plan_id=None,
+                    order_date=trade_date,
+                    confirm_nav_date=trade_date,
+                    effective_from_date=trade_date,
                 )
                 inserted += 1
 
@@ -104,12 +108,20 @@ class FundTrackerService:
             payload={"inserted_count": inserted},
         )
 
-    def apply_text_command(self, text: str, trade_date: date | None = None) -> CommandResult:
+    def apply_text_command(
+        self,
+        text: str,
+        trade_date: date | None = None,
+        order_at: datetime | None = None,
+    ) -> CommandResult:
         parsed = parse_command(text)
-        command_date = trade_date or date.today()
+        explicit_trade_date = parsed.payload.get("explicit_trade_date")
+        explicit_date = date.fromisoformat(explicit_trade_date) if explicit_trade_date else None
+        command_date = trade_date or explicit_date or (order_at.date() if order_at else date.today())
+        command_at = order_at or self._order_datetime_for_command(command_date)
 
         if parsed.action == "trade":
-            return self._handle_trade(parsed, text, command_date)
+            return self._handle_trade(parsed, text, command_date, command_at)
         if parsed.action == "create_dca":
             return self._handle_create_dca(parsed, command_date)
         if parsed.action == "pause_dca":
@@ -157,6 +169,25 @@ class FundTrackerService:
         except Exception as exc:
             external_reports.append({"report_type": "external_error", "message": str(exc)})
 
+        try:
+            daily_opportunity = self.generate_daily_opportunity_report(
+                report_date=target_date,
+                snapshot=snapshot,
+                notify=True,
+            )
+            external_reports.append(
+                {
+                    "report_type": "external_daily_opportunity",
+                    "message": daily_opportunity.message,
+                    "recommendation_level": daily_opportunity.payload.get("recommendation_level"),
+                    "should_alert": daily_opportunity.payload.get("should_alert"),
+                }
+            )
+        except Exception as exc:
+            external_reports.append(
+                {"report_type": "external_daily_opportunity_error", "message": str(exc)}
+            )
+
         return CommandResult(
             message="每日任务执行完成。",
             payload={
@@ -203,6 +234,7 @@ class FundTrackerService:
             },
             skill_name=skill_name,
             report_body=report_body,
+            report_date=effective_report_date,
         )
         return CommandResult(
             message="已生成每月增强投资建议。",
@@ -246,6 +278,7 @@ class FundTrackerService:
             },
             skill_name=skill_name,
             report_body=report_body,
+            report_date=effective_report_date,
         )
         return CommandResult(
             message=f"已生成 {available_cash:.2f} 元可支配资金的调整方案。",
@@ -254,6 +287,96 @@ class FundTrackerService:
                 "available_cash": round(float(available_cash), 2),
                 "report": report_body,
                 "report_type": report_type,
+            },
+        )
+
+    def generate_daily_opportunity_report(
+        self,
+        report_date: date | None = None,
+        snapshot: dict[str, Any] | None = None,
+        available_cash: float | None = None,
+        notify: bool = False,
+    ) -> CommandResult:
+        effective_report_date = report_date or date.today()
+        current_snapshot = snapshot or self.build_portfolio_snapshot(as_of=effective_report_date)
+        latest_monthly_report = self._latest_analysis_report(report_type="external_monthly")
+        engine = self._external_research_engine()
+        material_packet = engine.build_daily_opportunity_material_packet(
+            snapshot=current_snapshot,
+            latest_monthly_report=latest_monthly_report,
+            available_cash=available_cash,
+            risk_profile="稳健",
+            as_of=effective_report_date,
+        )
+        report_payload = self._codex_monthly_briefing_runner().generate_daily_opportunity_report(
+            material_packet
+        )
+        report_body = str(report_payload.get("report_body", "")).strip()
+        recommendation_level = str(report_payload.get("recommendation_level") or "watch").strip() or "watch"
+        should_alert = bool(report_payload.get("should_alert"))
+        summary = str(report_payload.get("summary") or "").strip()
+        no_action_reason = report_payload.get("no_action_reason")
+        if no_action_reason not in (None, ""):
+            no_action_reason = str(no_action_reason).strip()
+        else:
+            no_action_reason = None
+        expires_at = report_payload.get("expires_at")
+        if expires_at not in (None, ""):
+            expires_at = str(expires_at).strip()
+        else:
+            expires_at = None
+        opportunities = report_payload.get("opportunities")
+        if not isinstance(opportunities, list):
+            opportunities = []
+        opportunities = [item for item in opportunities if isinstance(item, dict)]
+
+        notification_results: list[dict[str, Any]] = []
+        if notify and should_alert and opportunities:
+            notification_results = self._send_daily_opportunity_notifications(
+                report_date=effective_report_date,
+                summary=summary or report_body,
+                opportunities=opportunities,
+            )
+
+        report_type = "external_daily_opportunity"
+        skill_name = "codex+fund-portfolio-advisor+fund-daily-opportunity-monitor"
+        self._save_analysis_report(
+            report_type=report_type,
+            input_snapshot={
+                "portfolio_snapshot": current_snapshot,
+                "available_cash": round(float(available_cash), 2)
+                if available_cash is not None and available_cash > 0
+                else None,
+                "latest_monthly_report_id": latest_monthly_report.get("id") if latest_monthly_report else None,
+                "candidate_universe_scope": material_packet.get("candidate_universe_scope"),
+                "priority_industry_watchlist": material_packet.get("priority_industry_watchlist"),
+                "priority_industry_watch_snapshot": material_packet.get("priority_industry_watch_snapshot"),
+                "recommendation_level": recommendation_level,
+                "should_alert": should_alert,
+                "summary": summary,
+                "no_action_reason": no_action_reason,
+                "opportunities": opportunities,
+                "expires_at": expires_at,
+                "notification_results": notification_results,
+            },
+            skill_name=skill_name,
+            report_body=report_body,
+            report_date=effective_report_date,
+        )
+        return CommandResult(
+            message="已生成今日强机会监测结果。",
+            payload={
+                "snapshot": current_snapshot,
+                "priority_industry_watch_snapshot": material_packet.get("priority_industry_watch_snapshot"),
+                "report": report_body,
+                "report_type": report_type,
+                "recommendation_level": recommendation_level,
+                "should_alert": should_alert,
+                "summary": summary,
+                "no_action_reason": no_action_reason,
+                "opportunities": opportunities,
+                "expires_at": expires_at,
+                "notification_results": notification_results,
             },
         )
 
@@ -502,28 +625,21 @@ class FundTrackerService:
     ) -> dict[str, Any]:
         fund_code = str(action["fund_code"])
         payload = self.price_provider.fetch_payload(fund_code)
-        price_point = _latest_point_on_or_before(payload.history, command_date)
-        if price_point is None:
-            raise ValueError(f"基金 {fund_code} 在 {command_date.isoformat()} 之前没有净值数据。")
+        order_at = self._order_datetime_for_command(command_date)
+        settled = self._resolve_transaction_settlement_dates(
+            payload.history,
+            order_at=order_at,
+            fund_code=fund_code,
+            fund_name=payload.fund_name,
+        )
+        if settled is None:
+            raise ValueError(f"基金 {fund_code} 在 {command_date.isoformat()} 及之后没有净值数据。")
+        confirm_point, effective_from_date, used_fallback_price = settled
 
-        self.conn.execute(
-            """
-            INSERT INTO funds (
-                fund_code, fund_name, fund_type, enabled,
-                default_drop_threshold_pct, created_at, updated_at
-            ) VALUES (?, ?, 'fund', 1, ?, ?, ?)
-            ON CONFLICT(fund_code) DO UPDATE SET
-                fund_name = excluded.fund_name,
-                default_drop_threshold_pct = COALESCE(funds.default_drop_threshold_pct, excluded.default_drop_threshold_pct),
-                updated_at = excluded.updated_at
-            """,
-            (
-                payload.fund_code,
-                payload.fund_name,
-                self.config.default_drop_threshold_pct,
-                _now_iso(),
-                _now_iso(),
-            ),
+        self._upsert_fund(
+            payload.fund_code,
+            payload.fund_name,
+            self.config.default_drop_threshold_pct,
         )
         self.conn.execute(
             """
@@ -538,17 +654,18 @@ class FundTrackerService:
             """,
             (
                 payload.fund_code,
-                price_point.price_date.isoformat(),
-                round(price_point.nav, 4),
-                price_point.pct_change_vs_prev,
+                confirm_point.price_date.isoformat(),
+                round(confirm_point.nav, 4),
+                confirm_point.pct_change_vs_prev,
                 payload.source_name,
                 _now_iso(),
             ),
         )
 
         amount = round(float(action["amount"]), 2)
-        shares = round(amount / price_point.nav, 4)
+        shares = round(amount / confirm_point.nav, 4)
         trade_type = "buy" if action["action_type"] == "buy" else "sell"
+        fee = self._compute_purchase_fee_amount(fund_code, payload.fund_name, amount) if trade_type == "buy" else 0.0
         if trade_type == "sell":
             current_shares = self._current_shares_from_transactions(fund_code)
             if shares > current_shares + 1e-6:
@@ -561,37 +678,38 @@ class FundTrackerService:
             f"{PLAN_ACTION_LABELS[action['action_type']]} "
             f"{amount:.2f} {action['fund_name']}（{fund_code}）"
         )
-        self.conn.execute(
-            """
-            INSERT INTO transactions (
-                fund_code, trade_date, trade_type, amount, nav, shares, fee,
-                source, status, note, raw_text, plan_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                fund_code,
-                price_point.price_date.isoformat(),
-                trade_type,
-                amount,
-                round(price_point.nav, 4),
-                shares,
-                0,
-                "analysis_report",
-                "posted",
-                note,
-                raw_text,
-                None,
-                _now_iso(),
-            ),
+        self._insert_transaction(
+            fund_code=fund_code,
+            trade_date=confirm_point.price_date.isoformat(),
+            trade_type=trade_type,
+            amount=amount,
+            nav=confirm_point.nav,
+            shares=shares,
+            fee=fee,
+            source="analysis_report",
+            status="posted",
+            note=note,
+            raw_text=raw_text,
+            plan_id=None,
+            order_date=command_date.isoformat(),
+            order_at=order_at.isoformat(timespec="seconds"),
+            confirm_nav_date=confirm_point.price_date.isoformat(),
+            effective_from_date=effective_from_date,
         )
         return {
             "action_type": action["action_type"],
             "fund_code": fund_code,
             "fund_name": action["fund_name"],
             "amount": amount,
-            "trade_date": price_point.price_date.isoformat(),
-            "nav": round(price_point.nav, 4),
+            "trade_date": confirm_point.price_date.isoformat(),
+            "order_date": command_date.isoformat(),
+            "order_at": order_at.isoformat(timespec="seconds"),
+            "confirm_nav_date": confirm_point.price_date.isoformat(),
+            "effective_from_date": effective_from_date,
+            "nav": round(confirm_point.nav, 4),
             "shares": shares,
+            "fee": round(fee, 2),
+            "used_fallback_price": used_fallback_price,
         }
 
     def _execute_dca_plan_action(
@@ -772,6 +890,101 @@ class FundTrackerService:
             funds.append(payload)
         return funds
 
+    def backfill_purchase_fees(self, overwrite: bool = False) -> CommandResult:
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT t.fund_code, f.fund_name
+            FROM transactions t
+            JOIN funds f ON f.fund_code = t.fund_code
+            WHERE t.status = 'posted'
+              AND t.trade_type IN ('buy', 'dca')
+            ORDER BY t.fund_code
+            """
+        ).fetchall()
+        if not rows:
+            return CommandResult(
+                message="没有可回填手续费的买入/定投记录。",
+                payload={"fund_count": 0, "transaction_count": 0, "skipped_funds": []},
+            )
+
+        updated_transactions = 0
+        updated_funds = 0
+        skipped_funds: list[str] = []
+        for row in rows:
+            fund_code = str(row["fund_code"])
+            fund_name = str(row["fund_name"])
+            rate_pct = self._resolve_purchase_fee_rate_pct(fund_code, fund_name)
+            if rate_pct is None or rate_pct <= 0:
+                skipped_funds.append(fund_code)
+                continue
+            updated_funds += 1
+            where_fee = "" if overwrite else "AND (fee IS NULL OR ABS(fee) < 1e-9)"
+            cursor = self.conn.execute(
+                f"""
+                UPDATE transactions
+                SET fee = ROUND(amount * ? / 100.0, 2)
+                WHERE fund_code = ?
+                  AND status = 'posted'
+                  AND trade_type IN ('buy', 'dca')
+                  {where_fee}
+                """,
+                (float(rate_pct), fund_code),
+            )
+            updated_transactions += int(cursor.rowcount or 0)
+
+        return CommandResult(
+            message=(
+                f"手续费回填完成：更新 {updated_transactions} 笔交易，"
+                f"命中费率基金 {updated_funds} 只。"
+            ),
+            payload={
+                "fund_count": len(rows),
+                "funds_with_fee_rate": updated_funds,
+                "transaction_count": updated_transactions,
+                "skipped_funds": skipped_funds,
+                "overwrite": overwrite,
+            },
+        )
+
+    def get_price_freshness_diagnostics(self, as_of: date | None = None) -> dict[str, Any]:
+        target_date = as_of or date.today()
+        fund_rows = self._list_funds()
+        items: list[dict[str, Any]] = []
+        stale_count = 0
+        missing_count = 0
+        for fund in fund_rows:
+            latest = self._latest_price_row(fund["fund_code"])
+            latest_price_date = str(latest["price_date"]) if latest else None
+            fetched_at = str(latest["fetched_at"]) if latest and latest["fetched_at"] else None
+            if latest_price_date is None:
+                lag_days = None
+                is_stale = True
+                missing_count += 1
+            else:
+                lag_days = max((target_date - date.fromisoformat(latest_price_date)).days, 0)
+                is_stale = lag_days > 0
+            if is_stale:
+                stale_count += 1
+            items.append(
+                {
+                    "fund_code": str(fund["fund_code"]),
+                    "fund_name": str(fund["fund_name"]),
+                    "latest_price_date": latest_price_date,
+                    "last_fetched_at": fetched_at,
+                    "lag_days": lag_days,
+                    "is_stale": is_stale,
+                }
+            )
+
+        items.sort(key=lambda item: (item["lag_days"] is None, -(item["lag_days"] or -1), item["fund_code"]))
+        return {
+            "as_of_date": target_date.isoformat(),
+            "total_funds": len(items),
+            "stale_funds": stale_count,
+            "missing_price_funds": missing_count,
+            "items": items,
+        }
+
     def list_dca_plans(
         self,
         include_inactive: bool = True,
@@ -847,7 +1060,7 @@ class FundTrackerService:
     def build_portfolio_snapshot(self, as_of: date | None = None) -> dict[str, Any]:
         effective_date = as_of or date.today()
         self._refresh_auto_fund_limits()
-        self._ensure_prices_for_tracked_funds()
+        self._ensure_prices_for_tracked_funds(as_of=effective_date)
         positions = self._compute_positions()
         active_dca_plans = self._list_active_dca_plans(execution_date=effective_date)
         same_day_execution_context = self._build_same_day_execution_context(
@@ -865,6 +1078,12 @@ class FundTrackerService:
         total_realized = sum(item["realized_pnl"] for item in positions)
         total_net_invested = sum(item["net_invested"] for item in positions)
         total_return_pct = (total_unrealized / total_cost_basis * 100) if total_cost_basis else 0
+        priced_positions = [item for item in positions if item["latest_price_date"]]
+        latest_price_dates = sorted({str(item["latest_price_date"]) for item in priced_positions})
+        one_day_pnl_positions = [item for item in positions if item["daily_pnl_as_of_date"]]
+        same_day_priced_positions = [
+            item for item in positions if item["latest_price_date"] == effective_date.isoformat()
+        ]
 
         for item in positions:
             item["weight_pct"] = round(
@@ -890,6 +1109,15 @@ class FundTrackerService:
                 "total_realized_pnl": round(total_realized, 2),
                 "total_return": round(total_unrealized + total_realized, 2),
                 "total_net_invested": round(total_net_invested, 2),
+                "valuation_as_of_date_min": latest_price_dates[0] if latest_price_dates else None,
+                "valuation_as_of_date_max": latest_price_dates[-1] if latest_price_dates else None,
+                "valuation_date_count": len(latest_price_dates),
+                "priced_position_count": len(priced_positions),
+                "same_day_priced_position_count": len(same_day_priced_positions),
+                "one_day_pnl_position_count": len(one_day_pnl_positions),
+                "as_of_target_date": effective_date.isoformat(),
+                "valuation_mode": "per_fund_latest_nav",
+                "daily_pnl_mode": "per_fund_latest_one_day_move",
             },
             "positions": positions,
             "active_dca_plans": active_dca_plans,
@@ -912,27 +1140,44 @@ class FundTrackerService:
 
         return latest_path
 
-    def _handle_trade(self, parsed: ParsedCommand, raw_text: str, command_date: date) -> CommandResult:
+    def _handle_trade(
+        self,
+        parsed: ParsedCommand,
+        raw_text: str,
+        command_date: date,
+        command_at: datetime,
+    ) -> CommandResult:
         identifier = parsed.payload["identifier"]
         fund = self._resolve_fund(identifier)
         payload = self.price_provider.fetch_payload(fund["fund_code"])
-        price_point = _latest_point_on_or_before(payload.history, command_date)
-        if price_point is None:
-            raise ValueError(f"基金 {fund['fund_code']} 在 {command_date.isoformat()} 之前没有净值数据")
+        settled = self._resolve_transaction_settlement_dates(
+            payload.history,
+            order_at=command_at,
+            fund_code=fund["fund_code"],
+            fund_name=payload.fund_name,
+        )
+        if settled is None:
+            latest_available = payload.history[-1].price_date.isoformat() if payload.history else "未知"
+            raise ValueError(
+                f"基金 {fund['fund_code']} 在 {command_date.isoformat()} 及之后没有净值数据。"
+                f"最新可用净值日为 {latest_available}，请在指令里写日期，例如："
+                f"买入 {fund['fund_code']} 10 {latest_available}"
+            )
+        confirm_point, effective_from_date, used_fallback_price = settled
 
         self._upsert_fund(
             payload.fund_code,
             payload.fund_name,
             float(fund["default_drop_threshold_pct"]),
         )
-        self._upsert_daily_price(payload.fund_code, price_point, payload.source_name)
+        self._upsert_daily_price(payload.fund_code, confirm_point, payload.source_name)
 
         if parsed.payload["value_type"] == "shares":
             shares = parsed.payload["value"]
-            amount = round(shares * price_point.nav, 2)
+            amount = round(shares * confirm_point.nav, 2)
         else:
             amount = parsed.payload["value"]
-            shares = round(amount / price_point.nav, 4)
+            shares = round(amount / confirm_point.nav, 4)
 
         if parsed.payload["trade_type"] == "sell":
             current_shares = self._current_shares(fund["fund_code"])
@@ -940,36 +1185,58 @@ class FundTrackerService:
                 raise ValueError(
                     f"卖出份额 {shares} 超过当前可用份额 {round(current_shares, 4)}：{fund['fund_code']}"
                 )
+        fee = (
+            self._compute_purchase_fee_amount(fund["fund_code"], payload.fund_name, amount)
+            if parsed.payload["trade_type"] == "buy"
+            else 0.0
+        )
 
         self._insert_transaction(
             fund_code=fund["fund_code"],
-            trade_date=price_point.price_date.isoformat(),
+            trade_date=confirm_point.price_date.isoformat(),
             trade_type=parsed.payload["trade_type"],
             amount=amount,
-            nav=price_point.nav,
+            nav=confirm_point.nav,
             shares=shares,
-            fee=0,
+            fee=fee,
             source="manual",
             status="posted",
             note=None,
             raw_text=raw_text,
             plan_id=None,
+            order_date=command_date.isoformat(),
+            order_at=command_at.isoformat(timespec="seconds"),
+            confirm_nav_date=confirm_point.price_date.isoformat(),
+            effective_from_date=effective_from_date,
         )
 
         action_text = "买入" if parsed.payload["trade_type"] == "buy" else "卖出"
+        settlement_hint = (
+            f"（当日后暂无新净值，自动按最近净值日 {confirm_point.price_date.isoformat()} 确认）"
+            if used_fallback_price
+            else ""
+        )
         return CommandResult(
             message=(
                 f"已记录{action_text}：{fund['fund_code']} {fund['fund_name']} "
-                f"{amount:.2f} 元，净值 {price_point.nav:.4f}，份额 {shares:.4f}"
+                f"{amount:.2f} 元，确认净值日 {confirm_point.price_date.isoformat()}，"
+                f"净值 {confirm_point.nav:.4f}，份额 {shares:.4f}，手续费 {fee:.2f} 元"
+                f"{settlement_hint}"
             ),
             payload={
                 "fund_code": fund["fund_code"],
                 "fund_name": fund["fund_name"],
                 "amount": round(amount, 2),
-                "nav": price_point.nav,
+                "nav": confirm_point.nav,
                 "shares": round(shares, 4),
                 "trade_type": parsed.payload["trade_type"],
-                "trade_date": price_point.price_date.isoformat(),
+                "trade_date": confirm_point.price_date.isoformat(),
+                "order_date": command_date.isoformat(),
+                "order_at": command_at.isoformat(timespec="seconds"),
+                "confirm_nav_date": confirm_point.price_date.isoformat(),
+                "effective_from_date": effective_from_date,
+                "fee": round(fee, 2),
+                "used_fallback_price": used_fallback_price,
             },
         )
 
@@ -1073,6 +1340,7 @@ class FundTrackerService:
             )
             self._upsert_daily_price(payload.fund_code, market_point, payload.source_name)
             shares = round(float(plan["amount"]) / market_point.nav, 4)
+            fee = self._compute_purchase_fee_amount(plan["fund_code"], payload.fund_name, float(plan["amount"]))
             self._insert_transaction(
                 fund_code=plan["fund_code"],
                 trade_date=market_point.price_date.isoformat(),
@@ -1080,12 +1348,16 @@ class FundTrackerService:
                 amount=float(plan["amount"]),
                 nav=market_point.nav,
                 shares=shares,
-                fee=0,
+                fee=fee,
                 source="auto_dca",
                 status="posted",
                 note=f"自动定投 {plan['run_rule']}",
                 raw_text=f"auto dca {plan['run_rule']}",
                 plan_id=int(plan["id"]),
+                order_date=target_date.isoformat(),
+                order_at=datetime.combine(target_date, time(9, 30)).isoformat(timespec="seconds"),
+                confirm_nav_date=market_point.price_date.isoformat(),
+                effective_from_date=_next_price_date_after(payload.history, market_point.price_date),
             )
             created_dates.append(market_point.price_date.isoformat())
         return created_dates
@@ -1154,8 +1426,66 @@ class FundTrackerService:
 
         return alerts_sent
 
-    def _ensure_prices_for_tracked_funds(self) -> None:
-        missing_codes = []
+    def _resolve_transaction_settlement_dates(
+        self,
+        history: list[PricePoint],
+        order_at: datetime,
+        fund_code: str,
+        fund_name: str,
+    ) -> tuple[PricePoint, str, bool] | None:
+        if not history:
+            return None
+        rule = self._resolve_settlement_rule(fund_code=fund_code, fund_name=fund_name)
+        confirm_point = _resolve_confirm_point_with_rule(
+            history=history,
+            order_at=order_at,
+            cutoff_time=rule["cutoff_time"],
+            confirm_trade_day_lag=int(rule["confirm_trade_day_lag"]),
+        )
+        used_fallback_price = False
+        if confirm_point is None:
+            confirm_point = _latest_point_on_or_before(history, order_at.date())
+            if confirm_point is None:
+                return None
+            used_fallback_price = True
+        effective_from_date = _resolve_effective_from_date_with_rule(
+            history=history,
+            confirm_date=confirm_point.price_date,
+            effective_trade_day_lag_after_confirm=int(rule["effective_trade_day_lag_after_confirm"]),
+        )
+        return confirm_point, effective_from_date, used_fallback_price
+
+    def _resolve_settlement_rule(self, fund_code: str, fund_name: str) -> dict[str, Any]:
+        default_rule = {
+            "cutoff_time": "15:00",
+            "confirm_trade_day_lag": 0,
+            "effective_trade_day_lag_after_confirm": 1,
+        }
+        try:
+            raw = self._external_research_engine().lookup_fund_settlement_rule(
+                fund_code=fund_code,
+                fund_name=fund_name,
+            )
+        except Exception:
+            return default_rule
+        cutoff = str(raw.get("cutoff_time", "15:00")).strip() or "15:00"
+        confirm_lag = int(raw.get("confirm_trade_day_lag", 0) or 0)
+        effective_lag = int(raw.get("effective_trade_day_lag_after_confirm", 1) or 1)
+        return {
+            "cutoff_time": cutoff,
+            "confirm_trade_day_lag": max(confirm_lag, 0),
+            "effective_trade_day_lag_after_confirm": max(effective_lag, 1),
+        }
+
+    def _order_datetime_for_command(self, command_date: date) -> datetime:
+        today = date.today()
+        if command_date == today:
+            return datetime.now()
+        return datetime.combine(command_date, time(0, 0))
+
+    def _ensure_prices_for_tracked_funds(self, as_of: date | None = None) -> None:
+        target_date = as_of or date.today()
+        stale_codes: list[str] = []
         rows = self.conn.execute(
             """
             SELECT DISTINCT fund_code
@@ -1166,10 +1496,11 @@ class FundTrackerService:
         ).fetchall()
         for row in rows:
             latest = self._latest_price_row(row["fund_code"])
-            if latest is None:
-                missing_codes.append(row["fund_code"])
+            latest_date = date.fromisoformat(latest["price_date"]) if latest else None
+            if latest_date is None or latest_date < target_date:
+                stale_codes.append(row["fund_code"])
 
-        for fund_code in missing_codes:
+        for fund_code in stale_codes:
             fund = self.conn.execute(
                 "SELECT * FROM funds WHERE fund_code = ?",
                 (fund_code,),
@@ -1264,7 +1595,9 @@ class FundTrackerService:
                     "market_value": round(market_value, 2),
                     "latest_nav": round(latest_nav, 4),
                     "latest_price_date": latest_price_date,
+                    "valuation_as_of_date": latest_price_date,
                     "daily_pct_change": daily_pct_change,
+                    "daily_pnl_as_of_date": latest_price_date if daily_pct_change is not None else None,
                     "daily_pnl": round(daily_pnl, 2),
                     "unrealized_pnl": round(unrealized_pnl, 2),
                     "realized_pnl": round(item["realized_pnl"], 2),
@@ -1384,22 +1717,66 @@ class FundTrackerService:
             raise ValueError(f"基金名称匹配到多个结果，请改用代码：{options}")
         raise ValueError(f"无法识别基金：{identifier}。请先导入初始持仓或直接使用基金代码。")
 
-    def _upsert_fund(self, fund_code: str, fund_name: str, drop_threshold_pct: float) -> None:
+    def _upsert_fund(
+        self,
+        fund_code: str,
+        fund_name: str,
+        drop_threshold_pct: float,
+        purchase_fee_rate_pct: float | None = None,
+    ) -> None:
         now = _now_iso()
         with self.conn:
             self.conn.execute(
                 """
                 INSERT INTO funds (
                     fund_code, fund_name, fund_type, enabled,
-                    default_drop_threshold_pct, created_at, updated_at
-                ) VALUES (?, ?, 'fund', 1, ?, ?, ?)
+                    default_drop_threshold_pct, purchase_fee_rate_pct, created_at, updated_at
+                ) VALUES (?, ?, 'fund', 1, ?, ?, ?, ?)
                 ON CONFLICT(fund_code) DO UPDATE SET
                     fund_name = excluded.fund_name,
                     default_drop_threshold_pct = COALESCE(funds.default_drop_threshold_pct, excluded.default_drop_threshold_pct),
+                    purchase_fee_rate_pct = COALESCE(excluded.purchase_fee_rate_pct, funds.purchase_fee_rate_pct),
                     updated_at = excluded.updated_at
                 """,
-                (fund_code, fund_name, drop_threshold_pct, now, now),
+                (fund_code, fund_name, drop_threshold_pct, purchase_fee_rate_pct, now, now),
             )
+
+    def _compute_purchase_fee_amount(self, fund_code: str, fund_name: str, amount: float) -> float:
+        if amount <= 0:
+            return 0.0
+        rate_pct = self._resolve_purchase_fee_rate_pct(fund_code, fund_name)
+        if rate_pct is None or rate_pct <= 0:
+            return 0.0
+        return round(amount * rate_pct / 100, 2)
+
+    def _resolve_purchase_fee_rate_pct(self, fund_code: str, fund_name: str) -> float | None:
+        row = self.conn.execute(
+            "SELECT purchase_fee_rate_pct FROM funds WHERE fund_code = ?",
+            (fund_code,),
+        ).fetchone()
+        if row is not None and row["purchase_fee_rate_pct"] is not None:
+            return round(float(row["purchase_fee_rate_pct"]), 4)
+
+        try:
+            rate_pct = self._external_research_engine().lookup_fund_purchase_fee_rate(
+                fund_code=fund_code,
+                fund_name=fund_name,
+            )
+        except Exception:
+            return None
+        if rate_pct is None:
+            return None
+        normalized_rate = round(float(rate_pct), 4)
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE funds
+                SET purchase_fee_rate_pct = ?, updated_at = ?
+                WHERE fund_code = ?
+                """,
+                (normalized_rate, _now_iso(), fund_code),
+            )
+        return normalized_rate
 
     def _insert_transaction(
         self,
@@ -1415,14 +1792,26 @@ class FundTrackerService:
         note: str | None,
         raw_text: str | None,
         plan_id: int | None,
+        order_date: str | None = None,
+        order_at: str | None = None,
+        confirm_nav_date: str | None = None,
+        effective_from_date: str | None = None,
     ) -> None:
+        effective_order_date = order_date or trade_date
+        effective_order_at = order_at or datetime.combine(
+            date.fromisoformat(effective_order_date),
+            time(0, 0),
+        ).isoformat(timespec="seconds")
+        effective_confirm_nav_date = confirm_nav_date or trade_date
+        effective_from = effective_from_date or trade_date
         with self.conn:
             self.conn.execute(
                 """
                 INSERT INTO transactions (
                     fund_code, trade_date, trade_type, amount, nav, shares, fee,
-                    source, status, note, raw_text, plan_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source, status, note, raw_text, plan_id, order_date,
+                    order_at, confirm_nav_date, effective_from_date, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     fund_code,
@@ -1437,6 +1826,10 @@ class FundTrackerService:
                     note,
                     raw_text,
                     plan_id,
+                    effective_order_date,
+                    effective_order_at,
+                    effective_confirm_nav_date,
+                    effective_from,
                     _now_iso(),
                 ),
             )
@@ -1498,6 +1891,7 @@ class FundTrackerService:
         input_snapshot: dict[str, Any],
         skill_name: str,
         report_body: str,
+        report_date: date | None = None,
     ) -> None:
         with self.conn:
             self.conn.execute(
@@ -1507,7 +1901,7 @@ class FundTrackerService:
                 ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    date.today().isoformat(),
+                    (report_date or date.today()).isoformat(),
                     report_type,
                     json.dumps(input_snapshot, ensure_ascii=False),
                     skill_name,
@@ -1515,6 +1909,101 @@ class FundTrackerService:
                     _now_iso(),
                 ),
             )
+
+    def _send_daily_opportunity_notifications(
+        self,
+        report_date: date,
+        summary: str,
+        opportunities: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        cooldown_results: list[dict[str, Any]] = []
+        fresh_opportunities: list[dict[str, Any]] = []
+        for item in opportunities:
+            fund_code = str(item.get("fund_code") or "").strip()
+            fund_name = str(item.get("fund_name") or fund_code).strip() or fund_code
+            if not fund_code:
+                continue
+            if self._alert_exists(fund_code, report_date.isoformat(), "daily_opportunity"):
+                continue
+            if self._recent_alert_exists(
+                fund_code=fund_code,
+                alert_date=report_date,
+                alert_type="daily_opportunity",
+                lookback_days=3,
+            ):
+                cooldown_results.append(
+                    {
+                        "fund_code": fund_code,
+                        "fund_name": fund_name,
+                        "delivery_status": "cooldown:3d",
+                        "alert_date": report_date.isoformat(),
+                    }
+                )
+                continue
+            fresh_opportunities.append(item)
+        if not fresh_opportunities:
+            return cooldown_results
+
+        headline = "；".join(
+            self._format_daily_opportunity_brief(item) for item in fresh_opportunities[:2]
+        )
+        message = headline if not summary else f"{headline}。{summary}"
+
+        channel_statuses: list[str] = []
+        if self.config.email.enabled:
+            try:
+                self._send_email(
+                    subject=f"[{self.config.notifications.title_prefix}] 今日强机会",
+                    body=message,
+                )
+                channel_statuses.append("email:sent")
+            except Exception as exc:
+                channel_statuses.append(f"email:failed:{exc}")
+
+        if self.config.notifications.macos_enabled:
+            try:
+                self._send_macos_notification(
+                    title=f"{self.config.notifications.title_prefix} - 今日强机会",
+                    message=message,
+                )
+                channel_statuses.append("macos:sent")
+            except Exception as exc:
+                channel_statuses.append(f"macos:failed:{exc}")
+
+        delivery_status = ",".join(channel_statuses) if channel_statuses else "skipped"
+        results: list[dict[str, Any]] = []
+        for item in fresh_opportunities:
+            fund_code = str(item.get("fund_code") or "").strip()
+            fund_name = str(item.get("fund_name") or fund_code).strip() or fund_code
+            self._insert_alert(
+                fund_code=fund_code,
+                alert_date=report_date.isoformat(),
+                alert_type="daily_opportunity",
+                trigger_value=1.0,
+                delivery_status=delivery_status,
+                message=message,
+            )
+            results.append(
+                {
+                    "fund_code": fund_code,
+                    "fund_name": fund_name,
+                    "delivery_status": delivery_status,
+                    "alert_date": report_date.isoformat(),
+                }
+            )
+        return cooldown_results + results
+
+    def _format_daily_opportunity_brief(self, opportunity: dict[str, Any]) -> str:
+        fund_name = str(opportunity.get("fund_name") or opportunity.get("fund_code") or "").strip()
+        fund_code = str(opportunity.get("fund_code") or "").strip()
+        amount = opportunity.get("suggested_amount")
+        amount_text = ""
+        if amount not in (None, ""):
+            try:
+                amount_text = f" {round(float(amount), 2):.0f}元"
+            except (TypeError, ValueError):
+                amount_text = ""
+        return f"{fund_name}({fund_code}){amount_text}"
 
     def list_analysis_reports(self, limit: int = 20) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -1528,6 +2017,12 @@ class FundTrackerService:
             (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_priority_industry_watchlist(self) -> dict[str, Any]:
+        return self._external_research_engine().describe_priority_industry_watchlist()
+
+    def update_priority_industry_watchlist(self, themes: list[str]) -> dict[str, Any]:
+        return self._external_research_engine().update_priority_industry_watchlist(themes)
 
     def _external_research_engine(self) -> ExternalResearchEngine:
         source_config_path = self.config.config_path.parent / "research_sources.yaml"
@@ -1648,6 +2143,10 @@ class FundTrackerService:
         payload["daily_purchase_limit_amount"] = (
             round(float(limit_amount), 2) if limit_amount is not None else None
         )
+        fee_rate = payload.get("purchase_fee_rate_pct")
+        payload["purchase_fee_rate_pct"] = (
+            round(float(fee_rate), 4) if fee_rate is not None else None
+        )
         payload["default_drop_threshold_pct"] = round(
             float(payload["default_drop_threshold_pct"]),
             2,
@@ -1759,12 +2258,32 @@ class FundTrackerService:
         row = self.conn.execute(
             """
             SELECT
-                COALESCE(SUM(CASE WHEN trade_type IN ('buy', 'dca', 'initial') THEN shares ELSE 0 END), 0) AS buy_shares,
-                COALESCE(SUM(CASE WHEN trade_type = 'sell' THEN shares ELSE 0 END), 0) AS sell_shares
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN trade_type IN ('buy', 'dca', 'initial')
+                             AND COALESCE(effective_from_date, trade_date) > ?
+                            THEN shares
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS buy_shares,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN trade_type = 'sell'
+                             AND COALESCE(effective_from_date, trade_date) > ?
+                            THEN shares
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS sell_shares
             FROM transactions
-            WHERE fund_code = ? AND status = 'posted' AND trade_date = ?
+            WHERE fund_code = ? AND status = 'posted'
             """,
-            (fund_code, price_date),
+            (price_date, price_date, fund_code),
         ).fetchone()
         buy_shares = float(row["buy_shares"]) if row else 0.0
         sell_shares = float(row["sell_shares"]) if row else 0.0
@@ -1790,6 +2309,28 @@ class FundTrackerService:
             LIMIT 1
             """,
             (fund_code, alert_date, alert_type),
+        ).fetchone()
+        return row is not None
+
+    def _recent_alert_exists(
+        self,
+        fund_code: str,
+        alert_date: date,
+        alert_type: str,
+        lookback_days: int,
+    ) -> bool:
+        start_date = (alert_date - timedelta(days=max(lookback_days, 0))).isoformat()
+        end_date = (alert_date - timedelta(days=1)).isoformat()
+        if end_date < start_date:
+            return False
+        row = self.conn.execute(
+            """
+            SELECT 1
+            FROM alerts
+            WHERE fund_code = ? AND alert_type = ? AND alert_date BETWEEN ? AND ?
+            LIMIT 1
+            """,
+            (fund_code, alert_type, start_date, end_date),
         ).fetchone()
         return row is not None
 
@@ -1906,3 +2447,80 @@ def _escape_applescript_text(value: str) -> str:
 def _latest_point_on_or_before(history: list[PricePoint], target_date: date) -> PricePoint | None:
     candidates = [point for point in history if point.price_date <= target_date]
     return candidates[-1] if candidates else None
+
+
+def _earliest_point_on_or_after(history: list[PricePoint], target_date: date) -> PricePoint | None:
+    for point in history:
+        if point.price_date >= target_date:
+            return point
+    return None
+
+
+def _next_price_date_after(history: list[PricePoint], target_date: date) -> str:
+    for point in history:
+        if point.price_date > target_date:
+            return point.price_date.isoformat()
+    return target_date.isoformat()
+
+
+def _resolve_confirm_point_with_rule(
+    history: list[PricePoint],
+    order_at: datetime,
+    cutoff_time: str,
+    confirm_trade_day_lag: int,
+) -> PricePoint | None:
+    if not history:
+        return None
+    base_date = order_at.date()
+    cutoff = _parse_hhmm(cutoff_time) or time(15, 0)
+    if order_at.time() > cutoff:
+        base_date = base_date + timedelta(days=1)
+
+    base_index = None
+    for idx, point in enumerate(history):
+        if point.price_date >= base_date:
+            base_index = idx
+            break
+    if base_index is None:
+        return None
+    confirm_index = base_index + max(confirm_trade_day_lag, 0)
+    if confirm_index >= len(history):
+        return None
+    return history[confirm_index]
+
+
+def _resolve_effective_from_date_with_rule(
+    history: list[PricePoint],
+    confirm_date: date,
+    effective_trade_day_lag_after_confirm: int,
+) -> str:
+    if not history:
+        return confirm_date.isoformat()
+    confirm_index = None
+    for idx, point in enumerate(history):
+        if point.price_date == confirm_date:
+            confirm_index = idx
+            break
+    if confirm_index is None:
+        return _add_business_days(confirm_date, max(effective_trade_day_lag_after_confirm, 1)).isoformat()
+    effective_index = confirm_index + max(effective_trade_day_lag_after_confirm, 1)
+    if effective_index >= len(history):
+        return _add_business_days(confirm_date, max(effective_trade_day_lag_after_confirm, 1)).isoformat()
+    return history[effective_index].price_date.isoformat()
+
+
+def _parse_hhmm(text: str) -> time | None:
+    matched = re.match(r"^\s*([01]?\d|2[0-3]):([0-5]\d)\s*$", str(text))
+    if not matched:
+        return None
+    return time(hour=int(matched.group(1)), minute=int(matched.group(2)))
+
+
+def _add_business_days(start: date, days: int) -> date:
+    result = start
+    remaining = max(days, 0)
+    while remaining > 0:
+        result = result + timedelta(days=1)
+        if result.weekday() < 5:
+            remaining -= 1
+    return result

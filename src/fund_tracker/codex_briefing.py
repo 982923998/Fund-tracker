@@ -17,11 +17,16 @@ class CodexMonthlyBriefingRunner:
         self.skill_path = self.skill_dir / "SKILL.md"
         self.cash_plan_skill_dir = project_root / "skills" / "fund-cash-deployment-plan"
         self.cash_plan_skill_path = self.cash_plan_skill_dir / "SKILL.md"
+        self.daily_opportunity_skill_dir = project_root / "skills" / "fund-daily-opportunity-monitor"
+        self.daily_opportunity_skill_path = self.daily_opportunity_skill_dir / "SKILL.md"
         self.portfolio_advisor_skill_path = project_root / "skills" / "fund-portfolio-advisor" / "SKILL.md"
         self.industry_skill_path = Path.home() / ".codex" / "skills" / "industry-research" / "SKILL.md"
         self.asset_allocation_skill_path = Path.home() / ".agents" / "skills" / "asset-allocation" / "SKILL.md"
         self.output_schema_path = self.skill_dir / "report_output.schema.json"
         self.cash_plan_output_schema_path = self.cash_plan_skill_dir / "report_output.schema.json"
+        self.daily_opportunity_output_schema_path = (
+            self.daily_opportunity_skill_dir / "report_output.schema.json"
+        )
         self.codex_bin = shutil.which("codex")
 
     def generate_monthly_report(self, material_packet: dict[str, Any]) -> dict[str, Any]:
@@ -62,6 +67,25 @@ class CodexMonthlyBriefingRunner:
         )
         return str(payload.get("report_body", "")).strip()
 
+    def generate_daily_opportunity_report(self, material_packet: dict[str, Any]) -> dict[str, Any]:
+        if not self.codex_bin:
+            raise ValueError("未找到 codex CLI，请先确认本机已安装 Codex。")
+        if not self.daily_opportunity_skill_path.exists():
+            raise ValueError(f"每日机会监测 skill 不存在：{self.daily_opportunity_skill_path}")
+        if not self.portfolio_advisor_skill_path.exists():
+            raise ValueError(f"组合顾问 skill 不存在：{self.portfolio_advisor_skill_path}")
+        if not self.daily_opportunity_output_schema_path.exists():
+            raise ValueError(f"每日机会监测输出 schema 不存在：{self.daily_opportunity_output_schema_path}")
+
+        prompt = self._build_daily_opportunity_prompt(material_packet)
+        return self._run_codex_report(
+            prompt=prompt,
+            material_packet=material_packet,
+            output_schema_path=self.daily_opportunity_output_schema_path,
+            prefix="daily-opportunity",
+            error_label="每日机会监测",
+        )
+
     def _build_prompt(self, material_packet: dict[str, Any]) -> str:
         skill_text = self.skill_path.read_text(encoding="utf-8").strip()
         advisor_skill_text = self.portfolio_advisor_skill_path.read_text(encoding="utf-8").strip()
@@ -74,7 +98,8 @@ class CodexMonthlyBriefingRunner:
             "请直接依据下面给出的项目私有 skill、组合顾问 skill、行业研究参考 skill、资产配置参考 skill 和材料包，生成最终月报。\n"
             "请严格遵守 skill 的写作规则，并只返回符合 schema 的 JSON。\n"
             "你必须基于材料包里的事实自己做判断，不能把候选基金宇宙或某个字段当作预设答案。\n"
-            "候选基金宇宙只是可比较的备选集合，不代表系统已经推荐这些方向；你可以选择其中一部分，也可以明确排除其中某些方向。\n"
+            "候选基金宇宙是系统从全市场开放式基金扫描后压缩出的重点候选摘要，不是用户手工白名单，也不代表系统已经推荐这些方向；你可以选择其中一部分，也可以明确排除其中某些方向。\n"
+            "如果材料包提供了 candidate_universe_scope 或 priority_industry_watchlist，说明系统这次确实做了全市场扫描，你应优先把这些重点行业当作观察重心，但仍可基于其他事实否决其中某些方向。\n"
             "请先完成组合诊断和资产配置判断，再综合第三到第五部分需要表达的调研结论，写第二部分“配置与操作建议”，最后把第二部分压缩成第一部分“资金调配方案”。\n"
             "如果材料包提供了 available_cash，第一部分必须给出精确到金额的资金调配方案，金额合计必须严格等于 available_cash，并尽量符合 amount_granularity 约束。\n"
             "第一部分必须是今天就能执行的方案：不要建议拆到未来几天，不要建议留现金等待，也不要把钱分配不完。\n"
@@ -130,6 +155,7 @@ class CodexMonthlyBriefingRunner:
             "请直接依据下面给出的项目私有 skill、组合顾问 skill、资产配置参考 skill 和材料包，生成最终资金调整方案。\n"
             "请严格遵守 skill 的写作规则，并只返回符合 schema 的 JSON。\n"
             "你必须基于材料包里的事实自己做判断，不能把候选基金宇宙或上一份月报当作预设答案。\n"
+            "候选基金宇宙是系统从全市场开放式基金扫描后压缩出的重点候选摘要，不是用户手工白名单；如果材料包提供了 candidate_universe_scope 或 priority_industry_watchlist，说明这次筛选范围已经覆盖全市场。\n"
             "上一份月报只是一份研究背景；你需要结合当前可支配资金、当前持仓、定投路径和组合失衡点，生成这一次真正可执行的金额方案。\n"
             "这次方案必须把 available_cash 全部用完，不允许保留现金，也不要建议拆到未来几天执行。\n"
             "如果材料包里有 same_day_execution_context、fund_constraints_catalog 或 daily_purchase_limit_amount，你必须严格遵守同一基金的单日限额；今天会执行的定投金额也要计入额度占用。\n"
@@ -151,6 +177,40 @@ class CodexMonthlyBriefingRunner:
             "===== CASH PLAN MATERIAL PACKET JSON START =====\n"
             f"{packet_json}\n"
             "===== CASH PLAN MATERIAL PACKET JSON END =====\n"
+        )
+
+    def _build_daily_opportunity_prompt(self, material_packet: dict[str, Any]) -> str:
+        skill_text = self.daily_opportunity_skill_path.read_text(encoding="utf-8").strip()
+        advisor_skill_text = self.portfolio_advisor_skill_path.read_text(encoding="utf-8").strip()
+        asset_allocation_skill_text = self._load_asset_allocation_skill_text()
+        packet_json = json.dumps(material_packet, ensure_ascii=False, indent=2)
+        return (
+            "你现在是 Fund Tracker 项目的每日强机会监测器。\n"
+            "你不需要运行任何命令，也不需要读取任何额外文件。\n"
+            "请直接依据下面给出的项目私有 skill、组合顾问 skill、资产配置参考 skill 和材料包，"
+            "判断今天是否存在足够强的当日例外买入机会，并只返回符合 schema 的 JSON。\n"
+            "默认立场是不动作；只有在理由足够强、组合补位意义清楚且今天确实可执行时，才输出 strong_buy。\n"
+            "不要把普通回撤、热点上涨或模糊新闻包装成强机会。\n"
+            "候选基金宇宙是系统从全市场开放式基金扫描后压缩出的重点候选摘要；如果材料包提供了 priority_industry_watchlist，说明这些行业是当前应重点关注的方向，但不代表自动推荐。\n"
+            "如果材料包提供了 priority_industry_watch_snapshot，你的 report_body 必须在结论之后补两个短区块："
+            "“重点行业速览”和“代表基金今日情况”。前者要按快照里的每个重点行业逐个写一句今天的大概情况；后者要按同样顺序覆盖每个重点行业，并且每个行业默认列出 3 只代表基金的今日表现与可执行约束；如果某个行业不足 3 只，也要明确写出不足。\n"
+            "如果材料包里有 same_day_execution_context、fund_constraints_catalog 或 daily_purchase_limit_amount，"
+            "你必须把这些当作硬约束，不能建议今天无法执行的买入。\n"
+            "如果材料包里有 available_cash，suggested_amount 不能超过它，且应符合 amount_granularity。\n"
+            "如果结论是 watch，通常应给出 opportunities 空数组，并在 no_action_reason 里明确说明今天为何不该买。\n"
+            "如果结论是 strong_buy，必须至少给出 1 个 opportunities，并明确 why_now、portfolio_fit 和主要风险。\n\n"
+            "===== DAILY OPPORTUNITY SKILL START =====\n"
+            f"{skill_text}\n"
+            "===== DAILY OPPORTUNITY SKILL END =====\n\n"
+            "===== PORTFOLIO ADVISOR SKILL START =====\n"
+            f"{advisor_skill_text}\n"
+            "===== PORTFOLIO ADVISOR SKILL END =====\n\n"
+            "===== ASSET ALLOCATION REFERENCE SKILL START =====\n"
+            f"{asset_allocation_skill_text}\n"
+            "===== ASSET ALLOCATION REFERENCE SKILL END =====\n\n"
+            "===== DAILY OPPORTUNITY MATERIAL PACKET JSON START =====\n"
+            f"{packet_json}\n"
+            "===== DAILY OPPORTUNITY MATERIAL PACKET JSON END =====\n"
         )
 
     def _run_codex_report(
@@ -248,12 +308,11 @@ class CodexMonthlyBriefingRunner:
         if not isinstance(payload, dict):
             return {"report_body": str(payload).strip(), "execution_plan": []}
 
-        report_body = str(payload.get("report_body", "")).strip()
-        execution_plan = payload.get("execution_plan")
-        if not isinstance(execution_plan, list):
-            execution_plan = []
-        execution_plan = [item for item in execution_plan if isinstance(item, dict)]
-        return {
-            "report_body": report_body,
-            "execution_plan": execution_plan,
-        }
+        normalized = dict(payload)
+        normalized["report_body"] = str(payload.get("report_body", "")).strip()
+        if "execution_plan" in payload:
+            execution_plan = payload.get("execution_plan")
+            if not isinstance(execution_plan, list):
+                execution_plan = []
+            normalized["execution_plan"] = [item for item in execution_plan if isinstance(item, dict)]
+        return normalized

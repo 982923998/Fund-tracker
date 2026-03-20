@@ -4,13 +4,14 @@ import json
 import re
 import ssl
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
 PINGZHONGDATA_URL = "https://fund.eastmoney.com/pingzhongdata/{code}.js?v={ts}"
+CHINA_TZ = timezone(timedelta(hours=8))
 
 
 @dataclass
@@ -121,7 +122,7 @@ def _parse_history(raw_history: Iterable[dict]) -> list[PricePoint]:
             PricePoint(
                 price_date=datetime.fromtimestamp(
                     float(timestamp_ms) / 1000,
-                    tz=timezone.utc,
+                    tz=CHINA_TZ,
                 ).date(),
                 nav=float(nav),
                 pct_change_vs_prev=(

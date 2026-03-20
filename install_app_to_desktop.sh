@@ -1,42 +1,53 @@
 #!/bin/bash
 
-APP_NAME="FundTrackerLauncher.app"
-DESKTOP_DIR="$HOME/Desktop"
-PROJECT_ROOT="/Users/chenmayao/Desktop/code/fund-tracker"
+set -euo pipefail
 
-echo "Creating Terminal-aware macOS App Bundle on Desktop..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+APP_NAME="Launch-Fund-Tracker.app"
+APP_DIR="$HOME/Desktop/AI"
+APP_PATH="$APP_DIR/$APP_NAME"
+LAUNCH_COMMAND="$PROJECT_ROOT/launch_fund_tracker.command"
+REFERENCE_APP="$HOME/Desktop/AI/Launch-Daily-Insights.app"
 
-# 1. Create directory structure
-mkdir -p "$DESKTOP_DIR/$APP_NAME/Contents/MacOS"
+upsert_plist_string() {
+    local key="$1"
+    local value="$2"
+    if /usr/libexec/PlistBuddy -c "Print :$key" "$APP_PATH/Contents/Info.plist" >/dev/null 2>&1; then
+        /usr/libexec/PlistBuddy -c "Set :$key $value" "$APP_PATH/Contents/Info.plist"
+    else
+        /usr/libexec/PlistBuddy -c "Add :$key string $value" "$APP_PATH/Contents/Info.plist"
+    fi
+}
 
-# 2. Create the executable script that opens Terminal
-cat <<EOF > "$DESKTOP_DIR/$APP_NAME/Contents/MacOS/Launcher"
-#!/bin/bash
-osascript -e 'tell application "Terminal" to do script "cd \"$PROJECT_ROOT\" && ./launch_web_app.sh"'
+upsert_plist_bool() {
+    local key="$1"
+    local value="$2"
+    if /usr/libexec/PlistBuddy -c "Print :$key" "$APP_PATH/Contents/Info.plist" >/dev/null 2>&1; then
+        /usr/libexec/PlistBuddy -c "Set :$key $value" "$APP_PATH/Contents/Info.plist"
+    else
+        /usr/libexec/PlistBuddy -c "Add :$key bool $value" "$APP_PATH/Contents/Info.plist"
+    fi
+}
+
+echo "Creating macOS app bundle at $APP_PATH ..."
+
+mkdir -p "$APP_DIR"
+rm -rf "$APP_PATH"
+
+osacompile -o "$APP_PATH" <<EOF
+on run
+	do shell script "open " & quoted form of POSIX path of "$LAUNCH_COMMAND"
+end run
 EOF
 
-chmod +x "$DESKTOP_DIR/$APP_NAME/Contents/MacOS/Launcher"
+upsert_plist_string "CFBundleIdentifier" "com.chenmayao.launch-fund-tracker"
+upsert_plist_string "CFBundleName" "Launch-Fund-Tracker"
+upsert_plist_bool "OSAAppletShowStartupScreen" "false"
 
-# 3. Create Info.plist
-cat <<EOF > "$DESKTOP_DIR/$APP_NAME/Contents/Info.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>Launcher</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.fundtracker.launcher</string>
-    <key>CFBundleName</key>
-    <string>FundTracker</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.1</string>
-    <key>LSUIElement</key>
-    <true/>
-</dict>
-</plist>
-EOF
+if [ -f "$REFERENCE_APP/Contents/Resources/applet.icns" ]; then
+    cp "$REFERENCE_APP/Contents/Resources/applet.icns" "$APP_PATH/Contents/Resources/applet.icns"
+fi
 
-echo "App Bundle updated: $DESKTOP_DIR/$APP_NAME"
+echo "App bundle updated: $APP_PATH"
+echo "Launch command: $LAUNCH_COMMAND"
